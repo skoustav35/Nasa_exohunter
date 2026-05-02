@@ -1,0 +1,6 @@
+{
+  "name": "Sarkar ExoHunter",
+  "description": "An autonomous, AI-driven pipeline for discovering unvetted exoplanets using NASA's TESS satellite data.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

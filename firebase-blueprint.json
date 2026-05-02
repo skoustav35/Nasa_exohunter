@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A researcher using the dashboard.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["displayName", "email", "createdAt"]
+    },
+    "PipelineQuery": {
+      "title": "PipelineQuery",
+      "description": "An active or completed query for a TIC ID.",
+      "type": "object",
+      "properties": {
+        "ticId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "thesis": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "researcherName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": ["ticId", "status", "userId", "researcherName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Stores user profiles."
+    },
+    "/queries/{queryId}": {
+      "schema": {
+        "$ref": "#/entities/PipelineQuery"
+      },
+      "description": "Stores pipeline query history and final positive discoveries."
+    }
+  }
+}

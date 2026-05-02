@@ -1,0 +1,21 @@
+{
+  "name": "sarkar-exohunter-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for Sarkar ExoHunter — AI-powered exoplanet discovery via any AI IDE",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2"
+  }
+}
