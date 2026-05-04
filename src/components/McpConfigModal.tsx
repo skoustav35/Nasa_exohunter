@@ -37,11 +37,10 @@ const TOOLS_LIST = [
 ];
 
 const IDE_LIST = [
+  { name: 'Google Antigravity', path: 'Preferred IDE for ExoHunter', icon: '🚀', preferred: true },
   { name: 'Cursor', path: '~/.cursor/mcp.json', icon: '⚡' },
   { name: 'Windsurf', path: '~/.codeium/windsurf/mcp_config.json', icon: '🏄' },
   { name: 'Claude Desktop', path: '~/Library/Application Support/Claude/claude_desktop_config.json', icon: '🤖' },
-  { name: 'VS Code + Continue', path: '~/.continue/config.json', icon: '💻' },
-  { name: 'Gemini CLI', path: '~/.gemini/settings.json', icon: '💎' },
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -180,23 +179,46 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
                     </pre>
                   </div>
 
-                  {/* Prereqs */}
-                  <div className="mt-5 bg-slate-800/50 border border-slate-700/60 rounded-xl p-4">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Prerequisites</h4>
-                    <div className="space-y-2 text-sm text-slate-400 font-medium">
-                      <div className="flex items-start gap-2">
-                        <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                        <span>Run <code className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300 text-xs font-mono">cd mcp-server && npm install && npm run build</code> once</span>
+                  {/* New Prerequisites / Antigravity Guide */}
+                  <div className="mt-5 space-y-4">
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-indigo-500/10 border border-indigo-500/30 rounded-2xl p-5"
+                    >
+                      <h4 className="flex items-center gap-2 text-sm font-bold text-indigo-300 uppercase tracking-widest mb-4">
+                        <Sparkles className="w-4 h-4" /> Preferred IDE: Google Antigravity
+                      </h4>
+                      <div className="space-y-4 text-sm text-slate-300 font-medium">
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold shrink-0">1</div>
+                          <p>Navigate to the <span className="text-indigo-300 font-bold">Agent Bar</span> in the Google Antigravity interface.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold shrink-0">2</div>
+                          <p>Open <span className="text-indigo-300 font-bold">Additional Options</span> &gt; <span className="text-indigo-300 font-bold">MCP Servers</span> &gt; <span className="text-indigo-300 font-bold">Manage MCP Servers</span>.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs font-bold shrink-0">3</div>
+                          <p>Click <span className="text-indigo-300 font-bold">View raw config</span> and paste the <code className="text-indigo-300 bg-indigo-950/50 px-1 rounded">mcp_config.json</code> provided above.</p>
+                        </div>
                       </div>
-                      <div className="flex items-start gap-2">
-                        <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                        <span>Keep the ExoHunter server running: <code className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300 text-xs font-mono">npm run dev</code></span>
+                    </motion.div>
+
+                    <motion.div 
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.2 }}
+                      className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5"
+                    >
+                      <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-widest mb-3">Target Objective</h4>
+                      <p className="text-slate-300 text-sm leading-relaxed mb-3 font-medium">
+                        Once connected, provide the following command to your AI agent to initiate a bulk scientific audit:
+                      </p>
+                      <div className="bg-slate-950/50 border border-slate-800 p-4 rounded-xl font-mono text-sm text-emerald-300 leading-relaxed shadow-inner italic">
+                        "use my sarkar-exohunter mcp and as a total make (10) thesis cards (combinely both in false_positive and in discovery lab)."
                       </div>
-                      <div className="flex items-start gap-2">
-                        <ChevronRight className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                        <span>Update <code className="bg-slate-800 px-1.5 py-0.5 rounded text-indigo-300 text-xs font-mono">args</code> path to absolute path on your system</span>
-                      </div>
-                    </div>
+                    </motion.div>
                   </div>
                 </motion.div>
               )}
@@ -229,7 +251,7 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
               {activeTab === 'setup' && (
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
                   <p className="text-sm font-medium text-slate-400 mb-4">
-                    Paste the config JSON into the appropriate file for your AI IDE:
+                    Configure your AI environment for Sarkar ExoHunter:
                   </p>
                   <div className="space-y-3">
                     {IDE_LIST.map((ide, i) => (
@@ -238,30 +260,43 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.06, duration: 0.3 }}
-                        className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 hover:bg-slate-800/80 hover:border-slate-600 transition-all"
+                        className={`bg-slate-800/50 border rounded-[1.5rem] p-5 transition-all ${
+                          ide.preferred 
+                          ? 'border-indigo-500/40 bg-indigo-500/5 shadow-[0_0_20px_rgba(99,102,241,0.1)]' 
+                          : 'border-slate-700/50 hover:bg-slate-800/80 hover:border-slate-600'
+                        }`}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <span className="text-2xl">{ide.icon}</span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-3xl filter drop-shadow-lg">{ide.icon}</span>
                             <div>
-                              <div className="text-base font-bold text-slate-200">{ide.name}</div>
+                              <div className="flex items-center gap-2">
+                                <div className="text-lg font-display font-bold text-slate-100">{ide.name}</div>
+                                {ide.preferred && (
+                                  <span className="bg-indigo-500/20 text-indigo-400 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter border border-indigo-500/30">
+                                    Recommended
+                                  </span>
+                                )}
+                              </div>
                               <code className="text-xs font-mono text-slate-500">{ide.path}</code>
                             </div>
                           </div>
-                          <ExternalLink className="w-4 h-4 text-slate-600" />
+                          <ChevronRight className={`w-5 h-5 ${ide.preferred ? 'text-indigo-400' : 'text-slate-700'}`} />
                         </div>
                       </motion.div>
                     ))}
                   </div>
 
-                  <div className="mt-5 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 border border-indigo-500/20 rounded-xl p-4">
-                    <h4 className="text-sm font-bold text-indigo-400 mb-2">💡 Quick Start</h4>
-                    <ol className="text-sm text-slate-400 font-medium space-y-1.5 list-decimal list-inside">
-                      <li>Copy the config JSON from the first tab</li>
-                      <li>Paste it into your IDE's MCP config file</li>
-                      <li>Update the <code className="text-indigo-300 text-xs bg-slate-800 px-1 rounded">args</code> path to the absolute path</li>
-                      <li>Restart your IDE — the ExoHunter tools will appear</li>
-                      <li>Ask your AI: <em className="text-indigo-300">"Discover a new exoplanet using ExoHunter"</em></li>
+                  <div className="mt-6 p-6 bg-gradient-to-br from-indigo-500/10 via-violet-500/10 to-transparent border border-indigo-500/20 rounded-3xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-16 -mt-16" />
+                    <h4 className="text-base font-bold text-indigo-300 mb-3 flex items-center gap-2">
+                      <Sparkles className="w-5 h-5" /> Quick Start Guideline
+                    </h4>
+                    <ol className="text-sm text-slate-400 font-semibold space-y-3 list-decimal list-inside">
+                      <li>Copy the <span className="text-slate-200">Config JSON</span> from the first tab.</li>
+                      <li>Open <span className="text-indigo-400">Google Antigravity</span> and manage your MCP servers.</li>
+                      <li>Paste the config and <span className="text-indigo-400">Restart the Agent</span>.</li>
+                      <li>Input the prompt: <span className="text-emerald-400 italic">"use my sarkar-exohunter mcp..."</span></li>
                     </ol>
                   </div>
                 </motion.div>
