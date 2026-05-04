@@ -1402,9 +1402,33 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
           thesis,
         });
       } else {
-        sendEvent("status", { state: "New Discovery!" });
         sendEvent("complete", { success: true, thesis });
       }
+
+      // ── Step 4: Sync Assets to Cloud Database (Firestore) ──
+      try {
+        const { setDoc, doc } = await import("firebase/firestore");
+        const { db } = await import("./src/lib/firebase.js");
+        
+        // Sync Report
+        const reportFile = `TIC_${ticId}_methodology.tex`;
+        const reportPath = path.join(process.cwd(), "reports", reportFile);
+        if (fs.existsSync(reportPath)) {
+          const content = fs.readFileSync(reportPath, "utf8");
+          await setDoc(doc(db, "reports", reportFile), {
+            ticId, filename: reportFile, content, createdAt: new Date().toISOString()
+          });
+        }
+
+        // Sync Plots (Metadata only if Storage is failing, but we keep the flow)
+        const plotFiles = fs.readdirSync(path.join(process.cwd(), "plots")).filter(f => f.startsWith(`TIC_${ticId}`));
+        for (const plotFile of plotFiles) {
+          await setDoc(doc(db, "plots", plotFile), {
+            ticId, filename: plotFile, status: "local_synced", createdAt: new Date().toISOString()
+          });
+        }
+      } catch (e) { console.warn("Asset cloud sync warning:", e); }
+
       return res.end();
     } catch (error: any) {
       console.error(error);
@@ -1435,9 +1459,10 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // ── Asset APIs: Reports and Plots ───────────────────────────
   app.get("/api/reports", async (req, res) => {
     try {
-      const reportsDir = path.join(process.cwd(), "reports");
-      if (!fs.existsSync(reportsDir)) return res.json({ files: [] });
-      const files = fs.readdirSync(reportsDir).filter(f => f.endsWith(".tex"));
+      const { getDocs, collection } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+      const querySnapshot = await getDocs(collection(db, "reports"));
+      const files = querySnapshot.docs.map(doc => doc.id);
       res.json({ files });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1447,12 +1472,15 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   app.get("/api/reports/:filename", async (req, res) => {
     try {
       const { filename } = req.params;
-      const filePath = path.join(process.cwd(), "reports", filename);
-      if (!fs.existsSync(filePath) || !filename.endsWith(".tex")) {
-        return res.status(404).json({ error: "Report not found" });
+      const { getDoc, doc } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+      const docRef = doc(db, "reports", filename);
+      const docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        return res.status(404).json({ error: "Report not found in cloud database" });
       }
-      const content = fs.readFileSync(filePath, "utf8");
-      res.json({ content });
+      res.json({ content: docSnap.data().content });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1460,12 +1488,39 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
 
   app.get("/api/plots", async (req, res) => {
     try {
-      const plotsDir = path.join(process.cwd(), "plots");
-      if (!fs.existsSync(plotsDir)) return res.json({ files: [] });
-      const files = fs.readdirSync(plotsDir).filter(f => f.endsWith(".png"));
+      const { getDocs, collection } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+      const querySnapshot = await getDocs(collection(db, "plots"));
+      // We return the filenames to keep frontend compatibility
+      const files = querySnapshot.docs.map(doc => doc.id);
       res.json({ files });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Redirect /plots/:filename to the Firebase Storage URL stored in Firestore
+  app.get("/plots/:filename", async (req, res) => {
+    try {
+      const { filename } = req.params;
+      const { getDoc, doc } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+      const docRef = doc(db, "plots", filename);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists() && docSnap.data().url) {
+        return res.redirect(docSnap.data().url);
+      }
+      
+      // Fallback to local if not in Firestore (for backward compatibility)
+      const localPath = path.join(process.cwd(), "plots", filename);
+      if (fs.existsSync(localPath)) {
+        return res.sendFile(localPath);
+      }
+      
+      res.status(404).send("Plot not found");
+    } catch (error) {
+      res.status(500).send("Error fetching plot");
     }
   });
 
