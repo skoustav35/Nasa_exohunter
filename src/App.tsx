@@ -5,15 +5,17 @@ import { Observatory } from './components/Observatory';
 import { QueryStream } from './components/QueryStream';
 import { DiscoveryLab } from './components/DiscoveryLab';
 import { RejectionLab } from './components/RejectionLab';
+import { ReportsLab } from './components/ReportsLab';
+import { PlotsLab } from './components/PlotsLab';
 import { Leaderboard } from './components/Leaderboard';
 import LandingPage from './components/LandingPage';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Sparkles, ChevronLeft, Play, AlertTriangle, Satellite, Trophy } from 'lucide-react';
+import { Activity, Sparkles, ChevronLeft, Play, AlertTriangle, Satellite, Trophy, FileText, Image as ImageIcon } from 'lucide-react';
 import { doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './lib/firebase';
 import { useFirebase } from './components/FirebaseProvider';
 
-type Section = 'hub' | 'observatory' | 'stream' | 'lab' | 'rejection' | 'leaderboard';
+type Section = 'hub' | 'observatory' | 'stream' | 'lab' | 'rejection' | 'leaderboard' | 'reports' | 'plots';
 
 interface TransitMetadata {
   source: 'mast' | 'simulated';
@@ -205,6 +207,26 @@ function Dashboard() {
       desc: 'Detailed rejection reports documenting rigorous false positive analysis.' 
     },
     { 
+      id: 'reports' as Section, 
+      title: 'Methodology Lab', 
+      icon: FileText, 
+      color: 'text-sky-500', 
+      bg: 'bg-sky-50',
+      border: 'hover:border-sky-300',
+      shadow: 'hover:shadow-sky-500/20',
+      desc: 'Access technical whitepapers and LaTeX methodology reports.' 
+    },
+    { 
+      id: 'plots' as Section, 
+      title: 'Visualization Hub', 
+      icon: ImageIcon, 
+      color: 'text-violet-500', 
+      bg: 'bg-violet-50',
+      border: 'hover:border-violet-300',
+      shadow: 'hover:shadow-violet-500/20',
+      desc: 'View analytical plots and phase-folded light curve diagrams.' 
+    },
+    { 
       id: 'leaderboard' as Section, 
       title: 'Leaderboard', 
       icon: Trophy, 
@@ -226,6 +248,10 @@ function Dashboard() {
         return <DiscoveryLab />;
       case 'rejection':
         return <RejectionLab />;
+      case 'reports':
+        return <ReportsLab />;
+      case 'plots':
+        return <PlotsLab />;
       case 'leaderboard':
         return <Leaderboard />;
       default:

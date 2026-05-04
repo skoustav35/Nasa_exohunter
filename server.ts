@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -1430,6 +1431,46 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
       res.end();
     }
   });
+
+  // ── Asset APIs: Reports and Plots ───────────────────────────
+  app.get("/api/reports", async (req, res) => {
+    try {
+      const reportsDir = path.join(process.cwd(), "reports");
+      if (!fs.existsSync(reportsDir)) return res.json({ files: [] });
+      const files = fs.readdirSync(reportsDir).filter(f => f.endsWith(".tex"));
+      res.json({ files });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/reports/:filename", async (req, res) => {
+    try {
+      const { filename } = req.params;
+      const filePath = path.join(process.cwd(), "reports", filename);
+      if (!fs.existsSync(filePath) || !filename.endsWith(".tex")) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+      const content = fs.readFileSync(filePath, "utf8");
+      res.json({ content });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/plots", async (req, res) => {
+    try {
+      const plotsDir = path.join(process.cwd(), "plots");
+      if (!fs.existsSync(plotsDir)) return res.json({ files: [] });
+      const files = fs.readdirSync(plotsDir).filter(f => f.endsWith(".png"));
+      res.json({ files });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Serve plots folder statically
+  app.use("/plots", express.static(path.join(process.cwd(), "plots")));
 
   // ── Vite middleware (dev) or static serving (prod) ──────────
   if (process.env.NODE_ENV !== "production") {
