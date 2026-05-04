@@ -14,9 +14,9 @@ dotenv.config({ path: ".env" });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let aiClient: GoogleGenAI | null = null;
+let aiClient: InstanceType<typeof GoogleGenAI> | null = null;
 
-function getGenAI(): GoogleGenAI {
+function getGenAI(): InstanceType<typeof GoogleGenAI> {
   if (!aiClient) {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
@@ -47,6 +47,8 @@ interface LightCurveResult {
   orbitalPeriod: number | null;
   transitDepth: number | null;
   estimatedRadius: number | null;
+  centroidX?: number[];
+  centroidY?: number[];
   source: "mast" | "simulated";
 }
 
@@ -87,18 +89,41 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
 
     const tceData = await tceResponse.json();
 
-    if (!tceData || !Array.isArray(tceData) || tceData.length === 0) {
+    let tceArray: any[] = [];
+    if (tceData && tceData.TCE && Array.isArray(tceData.TCE)) {
+      tceArray = tceData.TCE;
+    } else if (Array.isArray(tceData)) {
+      tceArray = tceData;
+    }
+
+    if (tceArray.length === 0) {
       console.warn(`[MAST] No TCEs found for TIC ${ticId}, using simulation`);
       return generateFallbackLightCurve(ticId);
     }
 
-    const tceCount = tceData.length;
-    const tce = tceData[0]; // Use the first (strongest) TCE
-    const tceNumber = tce.tce || 1;
-    const orbitalPeriod = tce.period || null;
+    const tceCount = tceArray.length;
+    let tceNumber = 1;
+    let sector = "";
+    const orbitalPeriod = null; // Can't always get period from tces endpoint
+
+    const firstTce = tceArray[0];
+    if (typeof firstTce === "string") {
+      // Format: "s0001-s0003:TCE_1"
+      const parts = firstTce.split(":");
+      if (parts.length >= 2) {
+        sector = parts[0];
+        const numMatch = parts[1].match(/\d+/);
+        tceNumber = numMatch ? parseInt(numMatch[0], 10) : 1;
+      }
+    } else if (typeof firstTce === "object") {
+      tceNumber = firstTce.tce || 1;
+    }
 
     // Step 2: Fetch the phase-folded light curve table
-    const tableUrl = `https://exo.mast.stsci.edu/api/v0.1/dvdata/tess/${ticId}/table/?tce=${tceNumber}`;
+    let tableUrl = `https://exo.mast.stsci.edu/api/v0.1/dvdata/tess/${ticId}/table/?tce=${tceNumber}`;
+    if (sector) {
+      tableUrl += `&sector=${sector}`;
+    }
     console.log(`[MAST] Fetching light curve table: ${tableUrl}`);
     const tableResponse = await fetchWithTimeout(tableUrl);
 
@@ -114,14 +139,32 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     // Extract PHASE and LC_DETREND columns
     let phases: number[] = [];
     let fluxes: number[] = [];
+    let centroidX: number[] = [];
+    let centroidY: number[] = [];
 
     if (tableData && Array.isArray(tableData)) {
       for (const row of tableData) {
         const phase = row.PHASE ?? row.phase;
         const flux = row.LC_DETREND ?? row.lc_detrend ?? row.LC_INIT ?? row.lc_init;
+        const centX =
+          row.MOM_CENTR1 ??
+          row.PSF_CENTR1 ??
+          row.CENTROID_COL ??
+          row.centroid_x ??
+          row.centroidX;
+        const centY =
+          row.MOM_CENTR2 ??
+          row.PSF_CENTR2 ??
+          row.CENTROID_ROW ??
+          row.centroid_y ??
+          row.centroidY;
         if (phase !== undefined && flux !== undefined && isFinite(phase) && isFinite(flux)) {
           phases.push(phase);
           fluxes.push(flux);
+          if (centX !== undefined && centY !== undefined && isFinite(centX) && isFinite(centY)) {
+            centroidX.push(Number(centX));
+            centroidY.push(Number(centY));
+          }
         }
       }
     }
@@ -147,8 +190,10 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
       fluxes.filter((_, i) => Math.abs(phases[i]) < 0.05)
     );
     const transitDepth = baselineFlux > 0 ? (baselineFlux - transitFlux) / baselineFlux : null;
+    // NOTE: This is a ROUGH preview assuming R_★ = 1.0 R☉ (109.2 R⊕).
+    // The authoritative planet radius comes from the APIE pipeline which queries TIC for real R_★.
     const estimatedRadius = transitDepth && transitDepth > 0
-      ? Math.sqrt(transitDepth) * 109.2 // R_earth units (1 R_sun = 109.2 R_earth)
+      ? Math.sqrt(transitDepth) * 109.2 // assumes 1.0 R_sun — APIE will correct this
       : null;
 
     console.log(
@@ -164,6 +209,8 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
       orbitalPeriod,
       transitDepth,
       estimatedRadius,
+      centroidX: centroidX.length === phases.length ? centroidX : undefined,
+      centroidY: centroidY.length === phases.length ? centroidY : undefined,
       source: "mast",
     };
   } catch (err: any) {
@@ -250,6 +297,73 @@ function computeStdDev(arr: number[]): number {
   return Math.sqrt(variance);
 }
 
+interface AsyncBridgeStatus {
+  job_id: string;
+  status: string;
+  ready: boolean;
+  successful: boolean;
+  progress?: number;
+  stage?: string;
+  meta?: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+}
+
+async function runPythonJson(args: string[]): Promise<any> {
+  const { execFile } = await import("child_process");
+  const pythonBin = process.env.EXOHUNTER_PYTHON_BIN || "python";
+
+  return await new Promise((resolve, reject) => {
+    execFile(
+      pythonBin,
+      args,
+      { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr?.trim() || error.message));
+          return;
+        }
+        try {
+          resolve(JSON.parse((stdout || "").trim() || "{}"));
+        } catch (parseError: any) {
+          reject(
+            new Error(
+              `Failed to parse Python bridge output: ${parseError.message}. Raw output: ${stdout}`
+            )
+          );
+        }
+      }
+    );
+  });
+}
+
+async function enqueueAnalysisJob(
+  ticId: string,
+  period: number,
+  transitDuration?: number
+): Promise<AsyncBridgeStatus> {
+  const args = [
+    "-m",
+    "exohunter.async_bridge",
+    "enqueue-profile",
+    ticId,
+    String(period),
+  ];
+  if (transitDuration !== undefined) {
+    args.push(String(transitDuration));
+  }
+  return (await runPythonJson(args)) as AsyncBridgeStatus;
+}
+
+async function readAnalysisJobStatus(jobId: string): Promise<AsyncBridgeStatus> {
+  return (await runPythonJson([
+    "-m",
+    "exohunter.async_bridge",
+    "status",
+    jobId,
+  ])) as AsyncBridgeStatus;
+}
+
 // ─────────────────────────────────────────────────────────────
 // SERVER SETUP
 // ─────────────────────────────────────────────────────────────
@@ -316,6 +430,8 @@ async function startServer() {
           orbitalPeriod: lightCurve.orbitalPeriod,
           transitDepth: lightCurve.transitDepth,
           estimatedRadius: lightCurve.estimatedRadius,
+          centroidX: lightCurve.centroidX,
+          centroidY: lightCurve.centroidY,
         },
       });
     } catch (error: any) {
@@ -503,15 +619,25 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
   app.get("/api/query-stream", async (req, res) => {
     try {
       const { db } = await import("./src/lib/firebase.js");
-      const { collection, getDocs, query, orderBy, limit } = await import("firebase/firestore");
+      const { collection, getDocs, query } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 20;
-      const q = query(collection(db, "queries"), orderBy("createdAt", "desc"), limit(queryLimit));
+      
+      const q = query(collection(db, "queries"));
       const snapshot = await getDocs(q);
-      const queries = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate?.()?.toISOString?.() || null,
-      }));
+      
+      const queries = snapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: (doc.data() as any).createdAt?.toDate?.() || new Date(0),
+        }))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, queryLimit)
+        .map(q => ({
+          ...q,
+          createdAt: q.createdAt.toISOString()
+        }));
+        
       res.json({ queries });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -544,15 +670,25 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
   app.get("/api/discoveries", async (req, res) => {
     try {
       const { db } = await import("./src/lib/firebase.js");
-      const { collection, getDocs, query, orderBy, limit, where } = await import("firebase/firestore");
+      const { collection, getDocs, query, where } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 20;
-      const q = query(collection(db, "queries"), where("status", "==", "New Discovery!"), orderBy("createdAt", "desc"), limit(queryLimit));
+      
+      const q = query(collection(db, "queries"), where("status", "==", "New Discovery!"));
       const snapshot = await getDocs(q);
-      const discoveries = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate?.()?.toISOString?.() || null,
-      }));
+      
+      const discoveries = snapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: (doc.data() as any).createdAt?.toDate?.() || new Date(0),
+        }))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, queryLimit)
+        .map(d => ({
+          ...d,
+          createdAt: d.createdAt.toISOString()
+        }));
+        
       res.json({ discoveries });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -618,7 +754,7 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
       const execAsync = promisify(exec);
       
       // Execute the python script
-      const { stdout, stderr } = await execAsync(`python verification_functions.py ${ticId} ${period}`);
+      const { stdout, stderr } = await execAsync(`python -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
       
       if (stderr && !stdout) {
         console.error("Python VF Error:", stderr);
@@ -633,15 +769,107 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
     }
   });
 
+  // ── MCP API: Physical Profile (APIE Engine) ─────────────────
+  app.post("/api/physical-profile", async (req, res) => {
+    try {
+      const { ticId, period, transitDuration } = req.body;
+      if (!ticId || period === undefined) {
+        return res.status(400).json({ error: "ticId and period required" });
+      }
+      
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const execAsync = promisify(exec);
+      
+      const durationArg = transitDuration ? ` ${transitDuration}` : "";
+      const { stdout, stderr } = await execAsync(`python -X utf8 verification_functions.py --profile ${ticId} ${period}${durationArg}`, { maxBuffer: 1024 * 1024 * 50 });
+      
+      if (stderr && !stdout) {
+        console.error("Python APIE Error:", stderr);
+        return res.status(500).json({ error: "Python APIE execution failed" });
+      }
+      
+      const result = JSON.parse(stdout.trim());
+      res.json(result);
+      
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const enqueueAnalysisHandler = async (req: express.Request, res: express.Response) => {
+    try {
+      const { ticId, period, transitDuration } = req.body || {};
+      if (!ticId) {
+        return res.status(400).json({ error: "ticId is required" });
+      }
+
+      let resolvedPeriod = Number(period);
+      if (!Number.isFinite(resolvedPeriod) || resolvedPeriod <= 0) {
+        const lightCurve = await fetchRealLightCurve(String(ticId));
+        resolvedPeriod = lightCurve.orbitalPeriod || 5.0;
+      }
+
+      const durationValue =
+        transitDuration !== undefined && transitDuration !== null
+          ? Number(transitDuration)
+          : undefined;
+
+      const job = await enqueueAnalysisJob(
+        String(ticId),
+        resolvedPeriod,
+        Number.isFinite(durationValue as number) ? durationValue : undefined
+      );
+
+      return res.status(202).json({
+        job_id: job.job_id,
+        status: job.status,
+        ticId,
+        period: resolvedPeriod,
+        status_url: `/api/status/${job.job_id}`,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  const readStatusHandler = async (req: express.Request, res: express.Response) => {
+    try {
+      const status = await readAnalysisJobStatus(req.params.jobId);
+      return res.status(status.ready ? 200 : 202).json(status);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  };
+
+  app.post("/analyze", enqueueAnalysisHandler);
+  app.post("/api/analyze", enqueueAnalysisHandler);
+  app.get("/status/:jobId", readStatusHandler);
+  app.get("/api/status/:jobId", readStatusHandler);
+
   // ── MCP API: Get Rejection Theses ──────────────────────────
   app.get("/api/rejection-theses", async (req, res) => {
     try {
       const { db } = await import("./src/lib/firebase.js");
-      const { collection, getDocs, query, where, orderBy, limit } = await import("firebase/firestore");
+      const { collection, getDocs, query, where } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 50;
-      const q = query(collection(db, "queries"), where("status", "==", "Rejected Thesis"), orderBy("createdAt", "desc"), limit(queryLimit));
+      
+      const q = query(collection(db, "queries"), where("status", "==", "Rejected Thesis"));
       const snapshot = await getDocs(q);
-      const theses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      const theses = snapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          createdAt: (doc.data() as any).createdAt?.toDate?.() || new Date(0),
+        }))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, queryLimit)
+        .map(t => ({
+          ...t,
+          createdAt: t.createdAt.toISOString()
+        }));
+        
       res.json({ theses });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -849,7 +1077,7 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
     });
   });
 
-  // ── Discovery Pipeline (SSE) ──────────────────────────────
+  // ── Discovery Pipeline (SSE) — Upgraded with APIE + 10x Validation ──
   app.get("/api/discover", async (req, res) => {
     const ticId = req.query.ticId as string;
 
@@ -887,10 +1115,9 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
         estimatedRadius: lightCurve.estimatedRadius,
       });
 
-      // ── Step 2: Agent 1 — The Fast Filter (Gemini Flash) ──
-      sendEvent("status", { state: "Scanning (Agent 1: Flash)..." });
+      // ── Step 2: Agent 1 — The False Positive Death Test (Gemini Flash) ──
+      sendEvent("status", { state: "Scanning (Agent 1: Flash — False Positive Death Test)..." });
 
-      // Compute statistical summaries for the AI
       const baselinePoints = lightCurve.flux.filter(
         (_, i) => Math.abs(lightCurve.time[i]) > 0.15
       );
@@ -932,12 +1159,12 @@ ${lightCurve.flux
   .map((n) => n.toFixed(6))
   .join(", ")}
 
-ANALYSIS INSTRUCTIONS:
-1. Is there a statistically significant flux dip in the transit region compared to the baseline?
-2. A real transit typically has SNR > 5 and a U-shaped or flat-bottomed dip.
-3. Consider if the dip could be stellar variability, instrumental noise, or an eclipsing binary.
+STRICT "FALSE POSITIVE" DEATH TEST:
+1. Eclipsing Binaries (EB): A planet transit creates a U-shaped (flat) bottom. An eclipsing binary creates a V-shaped (pointed) bottom. If V-shaped, REJECT.
+2. Secondary Eclipses: If there is a second, smaller dip at phase ~0.5, it's almost certainly two stars. REJECT.
+3. SNR Check: If SNR < 3, the signal is likely noise. REJECT.
 
-Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": float, "depth": float, "assessment": "one-line summary"}`;
+Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": float, "depth": float, "shape": "U-shaped"|"V-shaped"|"Irregular", "secondaryEclipseDetected": boolean, "assessment": "one-line summary", "reasonForRejection": "string or null"}`;
 
       let ai;
       try {
@@ -960,57 +1187,152 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
         confidence: analysis.confidence,
         snr: analysis.snr,
         depth: analysis.depth,
+        shape: analysis.shape,
         assessment: analysis.assessment,
       });
 
-      if (!analysis.found) {
-        sendEvent("status", { state: "Rejected: Stellar Noise" });
+      if (!analysis.found || analysis.shape === "V-shaped" || analysis.secondaryEclipseDetected) {
+        const rejectionReason = analysis.reasonForRejection || analysis.assessment || "Failed False Positive Death Test.";
+        sendEvent("status", { state: `Rejected: ${rejectionReason}` });
+        
+        // Auto-create query card for rejected candidate
+        try {
+          const { db } = await import("./src/lib/firebase.js");
+          const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+          await addDoc(collection(db, "queries"), {
+            ticId, status: `Rejected: ${rejectionReason}`, researcherName: "S.Koustav (Built-in AI)",
+            userId: "built-in-ai", createdAt: serverTimestamp(),
+          });
+        } catch (e) { console.warn("Failed to auto-save query card:", e); }
+
+        // Auto-create rejection thesis
+        try {
+          const rejectionThesis = `# False Positive Report: TIC ${ticId}\n\n## SECTION 1: Identity & Metadata\n- **TIC ID:** ${ticId}\n- **Lead Researcher:** S.Koustav (Built-in AI)\n- **Log Date:** ${new Date().toISOString()}\n- **Discovery Status:** False Positive Archive\n\n## SECTION 2: Physical & Photometric Parameters\n- **Transit Depth ($\\delta$):** ${(measuredDepth * 100).toFixed(4)}%\n- **SNR:** ${snr.toFixed(2)}\n- **Transit Shape:** ${analysis.shape || "Unknown"}\n\n## SECTION 5: AI Reasoning & Grounding\n- **Rejection Reasoning:** ${rejectionReason}\n- **Agent 1 Confidence:** ${analysis.confidence}\n- **Secondary Eclipse Detected:** ${analysis.secondaryEclipseDetected ? "Yes" : "No"}`;
+          
+          const { db } = await import("./src/lib/firebase.js");
+          const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+          await addDoc(collection(db, "queries"), {
+            ticId, thesis: rejectionThesis, researcherName: "S.Koustav (Built-in AI)",
+            status: "Rejected Thesis", userId: "built-in-ai", createdAt: serverTimestamp(),
+          });
+        } catch (e) { console.warn("Failed to auto-save rejection thesis:", e); }
+
         sendEvent("complete", {
           success: false,
-          reason:
-            analysis.assessment ||
-            "No statistically significant transit detected.",
+          reason: rejectionReason,
         });
         return res.end();
       }
 
-      // ── Step 3: Agent 2 — The Deep Verifier (Gemini Pro) ──
+      // ── Step 2.5: Python Verification Functions + APIE Engine ──
+      sendEvent("status", { state: "Invoking Python Verification Functions (Resonance Masking + Harmonic Sweeping)..." });
+
+      let vfResult: any = null;
+      let apieResult: any = null;
+      const period = lightCurve.orbitalPeriod || 5.0;
+
+      try {
+        const { exec } = await import("child_process");
+        const { promisify } = await import("util");
+        const execAsync = promisify(exec);
+
+        // Run resonance masking
+        const { stdout: vfOut } = await execAsync(`python -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
+        vfResult = JSON.parse(vfOut.trim());
+        sendEvent("verification", vfResult);
+
+        if (vfResult.resonance_alert) {
+          sendEvent("status", { state: "⚠️ RESONANCE ALERT: Period aligns with 13.7-day TESS downlink artifact!" });
+        }
+
+        // Run full APIE physical profile
+        sendEvent("status", { state: "Running Autonomous Physical Inference Engine (APIE)..." });
+        const { stdout: apieOut } = await execAsync(`python -X utf8 verification_functions.py --profile ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
+        apieResult = JSON.parse(apieOut.trim());
+        sendEvent("physical_profile", apieResult);
+      } catch (pyErr: any) {
+        console.warn("Python VF/APIE warning:", pyErr.message);
+        sendEvent("status", { state: "Python VF completed with warnings, continuing..." });
+      }
+
+      // ── Step 3: Agent 2 — Senior Astrophysicist (Gemini Pro) ──
       sendEvent("status", {
-        state: "Verifying Archive (Agent 2: Pro Grounded)...",
+        state: "Verifying Archive & Generating Thesis (Agent 2: Pro + Google Search)...",
       });
 
-      const agent2Prompt = `You are a senior astrophysicist writing a formal exoplanet discovery assessment for TIC ${ticId}.
+      const stellarInfo = apieResult?.inferred_stellar || {};
+      const orbitalInfo = apieResult?.inferred_orbital || {};
+      const resonanceInfo = vfResult || {};
 
-CONTEXT FROM PIPELINE:
+      const agent2Prompt = `You are a Senior Astrophysicist writing an Official cTOI Discovery Report for TIC ${ticId}.
+You MUST follow the COMPULSORY 10X VALIDATION PROTOCOL and generate the thesis in exactly 5 sections.
+
+Lead Researcher: S.Koustav
+
+PIPELINE DATA (from Python Verification Functions — DO NOT GUESS these values):
 - Data Source: ${lightCurve.source === "mast" ? "Real NASA MAST Archive" : "Simulated photometry"}
 - Agent 1 Confidence: ${analysis.confidence}
-- Measured Transit Depth: ${measuredDepth.toFixed(6)} (ΔF/F)
+- Agent 1 Shape Assessment: ${analysis.shape} (${analysis.assessment})
+- Measured Transit Depth (δ): ${measuredDepth.toFixed(6)} (${(measuredDepth * 100).toFixed(4)}%)
 - Signal-to-Noise Ratio: ${snr.toFixed(2)}
 - TCE Count: ${lightCurve.tceCount}
-${lightCurve.orbitalPeriod ? `- Orbital Period: ${lightCurve.orbitalPeriod} days` : ""}
-${lightCurve.estimatedRadius ? `- Estimated Planet Radius: ${lightCurve.estimatedRadius.toFixed(2)} R⊕` : ""}
+${period ? `- Orbital Period (P): ${period} days` : ""}
+${lightCurve.estimatedRadius ? `- MAST Estimated Planet Radius: ${lightCurve.estimatedRadius.toFixed(2)} R⊕` : ""}
+
+PYTHON APIE INFERRED PHYSICS (use these exact values):
+- Inferred Stellar Radius: ${stellarInfo.stellar_radius_solar || "N/A"} R☉
+- Inferred Stellar Mass: ${stellarInfo.stellar_mass_solar || "N/A"} M☉
+- Inferred T_eff: ${stellarInfo.effective_temperature_K || "N/A"} K
+- Inferred Stellar Density: ${stellarInfo.stellar_density_cgs || "N/A"} g/cm³
+- Inferred Apparent Magnitude: ${stellarInfo.apparent_magnitude_V || "N/A"}
+- Inferred Planet Radius: ${orbitalInfo.planet_radius_earth || "N/A"} R⊕ (${orbitalInfo.planet_radius_jupiter || "N/A"} R_J)
+- Semi-Major Axis: ${orbitalInfo.semi_major_axis_au || "N/A"} AU
+- Equilibrium Temperature: ${orbitalInfo.equilibrium_temperature_K || "N/A"} K
+- Classification: ${orbitalInfo.classification || "N/A"}
+- Composition: ${orbitalInfo.composition_guess || "N/A"}
+- Habitability Index: ${orbitalInfo.habitability_index || "N/A"}/100
+- In Habitable Zone: ${orbitalInfo.in_habitable_zone || "N/A"}
+- Physical Integrity Score: ${apieResult?.physical_integrity_score || "100"}/100
+- Sanity Flags: ${orbitalInfo.sanity_flags ? orbitalInfo.sanity_flags.join(", ") : "None"}
+
+PYTHON RESONANCE MASKING RESULTS:
+- Resonance Alert: ${resonanceInfo.resonance_alert ? "⚠️ TRUE — TESS ARTIFACT LIKELY" : "✅ FALSE — Clear"}
+- TESS Downlink Diff: ${resonanceInfo.resonance_diff_days || "N/A"} days
+
+PERIOD ALIASING & HARMONIC SWEEPING:
+- Odd/Even Consistency: ${apieResult?.period_confidence_report?.odd_even_consistent ? "✅ PASSED" : "❌ FAILED (Eclipsing Binary Alert)"}
+- SNR at P: ${apieResult?.period_confidence_report?.snr_at_P || "N/A"}
+- SNR at 0.5P: ${apieResult?.period_confidence_report?.snr_at_half_P || "N/A"}
+- SNR at 2P: ${apieResult?.period_confidence_report?.snr_at_double_P || "N/A"}
+- Period Corrected (Aliasing Detected): ${apieResult?.period_confidence_report?.period_corrected ? "⚠️ YES" : "NO"}
 
 INSTRUCTIONS:
 1. Use Google Search to look up "TIC ${ticId} NASA Exoplanet Archive" and "TIC ${ticId} ExoFOP TESS".
-2. Determine if this is already a known confirmed exoplanet (check for "confirmed planet" or "CP" disposition).
-3. If it IS already confirmed, respond with "KNOWN CONFIRMED" prominently at the start.
-4. If it is NOT confirmed, write a structured Discovery Thesis with the following sections:
-   
-   ## Transit Signal Analysis
-   - Describe the transit depth, duration, and shape characteristics
-   - Calculate Rp/Rs = sqrt(transit_depth) and estimate planet radius assuming R_star = 1 R_sun
-   
-   ## False Positive Assessment  
-   - Evaluate likelihood of eclipsing binary, background contamination, or instrumental artifacts
-   - Provide a false-positive probability estimate
-   
-   ## Planetary Parameters
-   - Estimated radius classification (sub-Earth, Earth-like, super-Earth, mini-Neptune, Neptune-like, Jupiter-like)
-   - Estimated equilibrium temperature (if orbital period is known): T_eq ≈ T_star × sqrt(R_star / (2a)), where a can be derived from Kepler's third law
-   - Habitability zone assessment
-   
-   ## Recommendation
-   - Recommend next steps: ground-based follow-up, radial velocity confirmation, etc.
+2. Determine if this is already a known confirmed exoplanet.
+3. If it IS already confirmed, state "KNOWN CONFIRMED" prominently.
+4. If Physical Integrity Score < 70%, you MUST label the Discovery Status as "RETRACTED: PHYSICAL ANOMALY" in Section 1 and explain the failed sanity checks in Section 5.
+5. Generate the thesis using EXACTLY this 5-section format:
+
+## SECTION 1: Identity & Metadata
+- TIC ID, Lead Researcher (S.Koustav), Log Date, Discovery Status (e.g., Confirmed Planet, False Positive Archive, or RETRACTED: PHYSICAL ANOMALY)
+
+## SECTION 2: Physical & Photometric Parameters
+Use the PYTHON-DERIVED values above. Format with LaTeX ($\\delta$, $R_p$, etc.).
+Include: Transit Depth, SNR, Planet Radius, Orbital Period, Transit Duration, Equilibrium Temperature.
+
+## SECTION 3: The "Anti-Mistake" Verification Metrics
+- Resonance Alert Flag (from Python VF)
+- Harmonic Sweep Result: If Period Corrected is YES, state "Aliasing Detected: Corrected to [New Period] days". Otherwise state "Harmonic Sweep Result: Note confirming testing at P/2 and Px2."
+- Physical Integrity Score
+- Confidence Score (%)
+
+## SECTION 4: Host Star Context
+Use the PYTHON APIE INFERRED values. Include: Stellar Radius, T_eff, Stellar Magnitude.
+
+## SECTION 5: AI Reasoning & Grounding
+- Archive Grounding Check result
+- Classification (from Python APIE)
+- Detailed Acceptance/Rejection Reasoning paragraph (explain Sanity Flags if any)
 
 Write in scientific prose with LaTeX equations where appropriate (use $...$ for inline math).`;
 
@@ -1030,11 +1352,52 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
         thesis?.toLowerCase().includes("already confirmed") ||
         thesis?.toLowerCase().includes("confirmed planet");
 
+      const isRetracted = thesis?.toUpperCase().includes("RETRACTED");
+
+      // Auto-create query card
+      try {
+        const { db } = await import("./src/lib/firebase.js");
+        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+        await addDoc(collection(db, "queries"), {
+          ticId,
+          status: isKnown ? "Known Planet" : (isRetracted ? "Retracted: Physical Anomaly" : "New Discovery!"),
+          researcherName: "S.Koustav (Built-in AI)",
+          userId: "built-in-ai",
+          createdAt: serverTimestamp(),
+        });
+      } catch (e) { console.warn("Failed to auto-save query card:", e); }
+
+      // Auto-save thesis
+      try {
+        const { db } = await import("./src/lib/firebase.js");
+        const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
+        if (isKnown || isRetracted) {
+          // Save as rejection thesis (known planet = rediscovery, retracted = anomaly)
+          await addDoc(collection(db, "queries"), {
+            ticId, thesis, researcherName: "S.Koustav (Built-in AI)",
+            status: "Rejected Thesis", userId: "built-in-ai", createdAt: serverTimestamp(),
+          });
+        } else {
+          // Save as discovery thesis
+          await addDoc(collection(db, "queries"), {
+            ticId, thesis, researcherName: "S.Koustav (Built-in AI)",
+            status: "New Discovery!", userId: "built-in-ai", createdAt: serverTimestamp(),
+          });
+        }
+      } catch (e) { console.warn("Failed to auto-save thesis:", e); }
+
       if (isKnown) {
         sendEvent("status", { state: "Known Planet" });
         sendEvent("complete", {
           success: false,
           reason: "Already exists in NASA Exoplanet Archive.",
+          thesis,
+        });
+      } else if (isRetracted) {
+        sendEvent("status", { state: "Retracted: Physical Anomaly" });
+        sendEvent("complete", {
+          success: false,
+          reason: "Physical anomaly detected (integrity score < 70%).",
           thesis,
         });
       } else {

@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: "Sovereign ExoHunter"
+message: "If you use this software, please cite it using the metadata below."
+type: software
+authors:
+  - family-names: "Sarkar"
+    given-names: "Koustav"
+    affiliation: "Sarkar ExoHunter Project"
+repository-code: "https://github.com/your-org/sovereign-exohunter"
+license: "MIT"
+version: "1.0.0"
+date-released: "2026-05-04"
+abstract: "A publication-oriented exoplanet validation pipeline with physics-aware false-positive vetting, automated reporting, and scalable background execution."

@@ -3,8 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
-const API_URL = process.env.EXOHUNTER_API_URL || "http://localhost:3000";
+const API_URL = process.env.EXOHUNTER_API_URL || "http://127.0.0.1:3000";
 
 // ─── Helpers ───────────────────────────────────────────────────
 async function apiGet(path: string): Promise<any> {
@@ -64,8 +63,8 @@ const SYSTEM_INSTRUCTIONS = `You are an AI Exoplanet Research Assistant & Scient
 
    SECTION 3: The "Anti-Mistake" Verification Metrics
    - Resonance Alert Flag: (True/False) Checking if $P$ is a harmonic of the 13.7-day TESS downlink cycle.
-   - Harmonic Sweep Result: Note confirming testing at $P/2$ and $P \times 2$ via run_python_verification.
-   - Centroid Shift Status: Verification that the dip is on the target star and not a neighbor.
+   - Harmonic Sweep Result: Note confirming testing at $P/2$ and $P \times 2$.
+   - Physical Integrity Score: [Score]/100 (If < 70%, YOU MUST LABEL AS "RETRACTED: PHYSICAL ANOMALY").
    - Confidence Score: % based on consistency of all parameters.
 
    SECTION 4: Host Star Context
@@ -76,21 +75,21 @@ const SYSTEM_INSTRUCTIONS = `You are an AI Exoplanet Research Assistant & Scient
    SECTION 5: AI Reasoning & Grounding
    - Archive Grounding Check: Verification against NASA Archive/ExoFOP to ensure it's not a re-discovery.
    - Classification: (e.g., Super-Earth, Sub-Neptune, Warm Jupiter).
-   - Acceptance/Rejection Reasoning: Detailed paragraph explaining the final verdict (e.g., "Rejected due to V-shaped transit indicating an Eclipsing Binary").
+   - Acceptance/Rejection Reasoning: Detailed paragraph explaining the final verdict (e.g., "Rejected due to V-shaped transit indicating an Eclipsing Binary"). Explain any Physical Sanity Flags.
 
 4. FINAL 10X RE-CHECK:
    - After generating the data above, re-verify all 5 sections 10 times for 100% accuracy before calling the final tools.
 
 5. FINAL LOGGING:
    - Call "create_query_card" first to log the attempt.
-   - Call "create_discovery_thesis" (for confirmed planets) or "create_rejection_thesis" (for false positives) with the full 5-section report.
+   - Call "create_discovery_thesis" (for confirmed planets). If Physical Integrity Score < 70%, call "create_rejection_thesis" and label it "RETRACTED: PHYSICAL ANOMALY".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚙️ MCP TOOL WORKFLOW:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Use "get_random_tic_id" or "run_discovery_loop" to start.
 2. Use "get_light_curve" and "compute_transit_statistics".
-3. Use "analyze_transit" and "run_python_verification" (CRITICAL for resonance masking).
+3. Use "analyze_physical_profiles" (CRITICAL for APIE physics, resonance masking, and physical integrity score).
 4. Perform the mandatory 10x Validation and data extraction.
 5. Log via create_query_card and then the relevant Thesis tool.`;
 
@@ -638,6 +637,101 @@ server.tool(
       return txt(report);
     } catch (e: any) {
       return txt(`⚠️ Python VF Error: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 29: Analyze Physical Profiles (APIE Engine) ─────────
+server.tool(
+  "analyze_physical_profiles",
+  `Run the full Autonomous Physical Inference Engine (APIE) on a TIC ID. This derives stellar parameters directly from transit timing using ab-initio physics and queries the TIC catalog, then calculates full orbital mechanics, planet radius, equilibrium temperature, composition guess, and habitability index. 
+  
+  Protocol: Independent Data Critique & Knowledge Cross-Check
+  When using the analyze_physical_profiles tool, the AI model MUST NOT accept the tool's output as the final answer. Instead, follow this 'Sovereign Verification' workflow:
+  1. Data Inspection: Before confirming a discovery, the AI must manually calculate the Transit Duration using the orbital period and stellar radius and compare it to the tool’s output.
+  2. Symmetry Assessment: The AI must analyze the 'Phase-Folded' data for symmetry. If the 'In-gress' and 'E-gress' slopes are identical, it supports a planetary origin. If they are asymmetric, the AI must flag a potential Stellar Flare or Artifact.
+  3. Astrophysical Cross-Check: The AI MUST use its internal scientific knowledge to evaluate the physical plausibility of the planet-star system. Compare the inferred planet radius, mass, and equilibrium temperature with known astrophysical limits and population distributions. If a classification (e.g., 'Hot Jupiter') contradicts established stellar-planetary dynamics (e.g., Roche limit violations, extreme irradiation beyond atmospheric escape limits), the AI must challenge the tool's classification.
+  4. The 'Contradiction' Check: The AI is required to 'argue' against the discovery. It must identify at least one physical reason why the signal might be a false positive (e.g., 'The SNR is high, but the transit depth is suspiciously deep for a G-type star').
+  5. Final Verdict: The AI only outputs 'Confirmed' if its own logical analysis and external knowledge match the tool's mathematical output. If there is a conflict, the AI must prioritize Physical Integrity over tool-generated labels.`,
+  {
+    ticId: z.string().describe("The TIC ID being analyzed"),
+    period: z.number().describe("The estimated orbital period in days"),
+    transitDuration: z.number().optional().describe("Transit duration in hours (auto-estimated if not provided)"),
+  },
+  async ({ ticId, period, transitDuration }) => {
+    try {
+      const body: any = { ticId, period };
+      if (transitDuration) body.transitDuration = transitDuration;
+      const data = await apiPost("/api/physical-profile", body);
+      if (data.status === "error") throw new Error(data.message);
+      
+      let report = `🔬 APIE Physical Profile for TIC ${ticId}\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      report += `📊 Measured Parameters:\n`;
+      report += `• Transit Depth (δ): ${(data.measured_transit_depth * 100).toFixed(4)}%\n`;
+      report += `• SNR: ${data.measured_snr}\n`;
+      report += `• Transit Duration: ${data.transit_duration_hours} hours\n`;
+      report += `• Orbital Period: ${data.orbital_period_days} days\n`;
+      report += `• Physical Integrity Score: ${data.physical_integrity_score}/100\n`;
+      if (data.flag_reason) {
+        report += `• ⚠️ Flag Reason: ${data.flag_reason}\n`;
+      }
+      report += `\n`;
+      
+      report += `⚠️ Resonance Masking:\n`;
+      report += `• Alert: ${data.resonance_masking.alert ? "⚠️ TRUE (TESS Artifact Likely)" : "✅ FALSE (Clear)"}\n`;
+      report += `• TESS Diff: ${data.resonance_masking.tess_diff_days} days\n\n`;
+      
+      report += `🎵 Harmonic Sweeping (SNR):\n`;
+      report += `• P: ${data.harmonic_sweeping.snr_P}\n`;
+      report += `• P/2: ${data.harmonic_sweeping.snr_half_P}\n`;
+      report += `• P×2: ${data.harmonic_sweeping.snr_double_P}\n\n`;
+      
+      const s = data.inferred_stellar;
+      report += `⭐ Inferred Stellar Parameters:\n`;
+      report += `• Stellar Source: ${s.stellar_source === "TIC" ? "✅ TIC Catalog (real)" : "⚙️ Ab-Initio (transit-derived)"}\n`;
+      report += `• Stellar Density: ${s.stellar_density_cgs} g/cm³\n`;
+      report += `• Stellar Radius: ${s.stellar_radius_solar} R☉\n`;
+      report += `• Stellar Mass: ${s.stellar_mass_solar} M☉\n`;
+      report += `• T_eff: ${s.effective_temperature_K} K\n`;
+      if (s.logg) report += `• log(g): ${s.logg}\n`;
+      report += `• Apparent Mag (V): ${s.apparent_magnitude_V}\n`;
+      report += `• Derivation: ${s.derivation}\n\n`;
+      
+      const o = data.inferred_orbital;
+      report += `🪐 Inferred Orbital Physics & Sanity:\n`;
+      report += `• Semi-Major Axis: ${o.semi_major_axis_au} AU\n`;
+      report += `• Planet Radius: ${o.planet_radius_earth} R⊕ (${o.planet_radius_jupiter} R_J)\n`;
+      report += `• Equilibrium Temp: ${o.equilibrium_temperature_K} K\n`;
+      report += `• Classification: ${o.classification}\n`;
+      report += `• Composition: ${o.composition_guess}\n`;
+      report += `• Habitability Index: ${o.habitability_index}/100\n`;
+      report += `• In Habitable Zone: ${o.in_habitable_zone ? "YES" : "NO"}\n`;
+      report += `• HZ Range: ${o.hz_inner_au} - ${o.hz_outer_au} AU\n`;
+      report += `• Physical Integrity Score: ${data.physical_integrity_score}/100\n`;
+      report += `• Sanity Flags: ${o.sanity_flags && o.sanity_flags.length > 0 ? o.sanity_flags.join(", ") : "None"}\n`;
+      if (o.flag_reasons && o.flag_reasons.length > 0) {
+        report += `• Flag Reasons: ${o.flag_reasons.join("; ")}\n`;
+      }
+      report += `\n`;
+
+      const conf = data.period_confidence_report;
+      if (conf) {
+        report += `🔄 Period Confidence & Aliasing:\n`;
+        report += `• Odd/Even Consistency: ${conf.odd_even_consistent ? "✅ PASSED" : "❌ FAILED (Eclipsing Binary Alert)"}\n`;
+        report += `• Odd Depth: ${(conf.odd_depth * 100).toFixed(3)}% | Even Depth: ${(conf.even_depth * 100).toFixed(3)}%\n`;
+        report += `• SNR at 0.5P: ${conf.snr_at_half_P}\n`;
+        report += `• SNR at P: ${conf.snr_at_P}\n`;
+        report += `• SNR at 2P: ${conf.snr_at_double_P}\n`;
+        report += `• Period Corrected: ${conf.period_corrected ? `⚠️ YES (from ${conf.corrected_from} days)` : "No"}\n\n`;
+      }
+      
+      report += `📝 Summary:\n${data.summary}\n`;
+      
+      return txt(report);
+    } catch (e: any) {
+      return txt(`⚠️ APIE Error: ${e.message}`);
     }
   }
 );

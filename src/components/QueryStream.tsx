@@ -39,6 +39,7 @@ export function QueryStream() {
     if (status.includes('Fetching')) return { text: 'text-slate-300', bg: 'bg-slate-800/80 border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.4)]', badge: 'bg-slate-700 text-slate-300', icon: Activity };
     if (status.includes('Scanning')) return { text: 'text-yellow-400', bg: 'bg-yellow-900/20 border-yellow-700/50 shadow-[0_8px_30px_rgba(234,179,8,0.15)]', badge: 'bg-yellow-500/20 text-yellow-400', icon: Search };
     if (status.includes('Rejected')) return { text: 'text-red-400', bg: 'bg-red-900/20 border-red-800/50 shadow-[0_8px_30px_rgba(248,113,113,0.15)]', badge: 'bg-red-500/20 text-red-400', icon: AlertCircle };
+    if (status.includes('APIE') || status.includes('Resonance') || status.includes('Python')) return { text: 'text-purple-400', bg: 'bg-purple-900/20 border-purple-800/50 shadow-[0_8px_30px_rgba(168,85,247,0.15)]', badge: 'bg-purple-500/20 text-purple-400', icon: Activity };
     if (status.includes('Verifying')) return { text: 'text-blue-400', bg: 'bg-blue-900/20 border-blue-800/50 shadow-[0_8px_30px_rgba(59,130,246,0.15)]', badge: 'bg-blue-500/20 text-blue-400', icon: Search };
     if (status.includes('Known')) return { text: 'text-gray-400', bg: 'bg-gray-800/50 border-gray-700 shadow-[0_8px_30px_rgba(156,163,175,0.15)]', badge: 'bg-gray-700 text-gray-300', icon: HelpCircle };
     if (status.includes('New Discovery')) return { text: 'text-green-400', bg: 'bg-green-900/20 border-green-700/50 shadow-[0_8px_30px_rgba(34,197,94,0.2)]', badge: 'bg-green-500 text-white', icon: CheckCircle2 };
@@ -146,10 +147,13 @@ export function QueryStream() {
                       exit={{ opacity: 0, height: 0, marginTop: 0 }}
                       className="overflow-hidden text-[13px] leading-relaxed font-medium text-slate-400 border-t border-slate-700/50 pt-4"
                     >
-                      {q.status.includes('Rejected') && "Pipeline terminated: Neural-net detected stellar noise or eclipsing binary signature."}
-                      {q.status.includes('Known') && "Target cross-referenced with ExoFOP archive and identified as a previously cataloged exoplanet."}
-                      {q.status.includes('New Discovery') && "Transit confirmed! Deep search verified uncataloged status. Thesis generated."}
-                      {['Fetching', 'Scanning', 'Verifying'].some(s => q.status.includes(s)) && "AI agents are actively analyzing folded light curves and searching the NASA Exoplanet framework."}
+                      {q.status.includes('Rejected') && "Pipeline terminated: False Positive Death Test flagged this candidate. Rejection thesis auto-generated."}
+                      {q.status.includes('Known') && "Target cross-referenced with ExoFOP archive — already cataloged. Rejection thesis auto-saved."}
+                      {q.status.includes('New Discovery') && "Transit confirmed! APIE engine derived stellar density → Kepler's 3rd Law → planet radius. Discovery thesis auto-saved."}
+                      {q.status.includes('APIE') && "Inverting light curve to derive stellar density... Applying Kepler's 3rd Law for orbital distance..."}
+                      {q.status.includes('Resonance') && "Python VF checking for 13.7-day TESS downlink resonance artifacts..."}
+                      {q.status.includes('Harmonic') && "Performing Phase-Folding at multiple harmonics and Odd-Even Depth Consistency Check..."}
+                      {['Fetching', 'Scanning', 'Verifying'].some(s => q.status.includes(s)) && "AI agents analyzing folded light curves with Python Verification Functions and APIE engine."}
                     </motion.div>
                   )}
                 </AnimatePresence>

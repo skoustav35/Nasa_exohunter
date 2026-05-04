@@ -1,0 +1,286 @@
+openapi: 3.1.0
+info:
+  title: Sovereign ExoHunter API
+  version: 1.0.0
+  description: |
+    HTTP surface for the Sovereign ExoHunter validation pipeline.
+    Python-backed verification lives behind the Node server routes and can be scaled with the bundled Celery worker.
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: light-curve
+  - name: verification
+paths:
+  /api/light-curve/{ticId}:
+    get:
+      tags: [light-curve]
+      summary: Fetch a light curve for a TIC target
+      parameters:
+        - in: path
+          name: ticId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Phase-folded or fetched light curve
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightCurveResponse"
+  /api/verify-period:
+    post:
+      tags: [verification]
+      summary: Run resonance masking and harmonic sweeping
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticId, period]
+              properties:
+                ticId:
+                  type: string
+                period:
+                  type: number
+      responses:
+        "200":
+          description: Verification summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationResponse"
+  /api/physical-profile:
+    post:
+      tags: [verification]
+      summary: Run the full sovereign exoplanet validation profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticId, period]
+              properties:
+                ticId:
+                  type: string
+                period:
+                  type: number
+                transitDuration:
+                  type: number
+                  description: Transit duration in hours.
+      responses:
+        "200":
+          description: Publication-facing physical profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhysicalProfileResponse"
+  /api/analyze:
+    post:
+      tags: [verification]
+      summary: Dispatch a full analysis task to Celery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticId]
+              properties:
+                ticId:
+                  type: string
+                period:
+                  type: number
+                transitDuration:
+                  type: number
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                  ticId:
+                    type: string
+                  period:
+                    type: number
+                  status_url:
+                    type: string
+  /api/status/{jobId}:
+    get:
+      tags: [verification]
+      summary: Poll the status of an async Celery analysis task
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Completed task status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncStatusResponse"
+        "202":
+          description: Task still running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AsyncStatusResponse"
+components:
+  schemas:
+    LightCurveResponse:
+      type: object
+      properties:
+        ticId:
+          type: string
+        lightCurve:
+          type: object
+          properties:
+            time:
+              type: array
+              items:
+                type: number
+            flux:
+              type: array
+              items:
+                type: number
+        metadata:
+          type: object
+          additionalProperties: true
+    VerificationResponse:
+      type: object
+      properties:
+        ticId:
+          type: string
+        tested_period:
+          type: number
+        resonance_alert:
+          type: boolean
+        resonance_diff_days:
+          type: number
+        harmonic_sweeping:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    PhysicalProfileResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        ticId:
+          type: string
+        data_source:
+          type: string
+        validation_status:
+          type: string
+        measured_transit_depth:
+          type: number
+        measured_snr:
+          type: number
+        transit_duration_hours:
+          type: number
+        orbital_period_days:
+          type: number
+        physical_integrity_score:
+          type: number
+        flag_reason:
+          type: string
+          nullable: true
+        plot_path:
+          type: string
+          nullable: true
+        difference_image_path:
+          type: string
+          nullable: true
+        ttv_plot_path:
+          type: string
+          nullable: true
+        rnaas_report:
+          type: object
+          nullable: true
+          additionalProperties: true
+        methodology_report:
+          type: object
+          nullable: true
+          additionalProperties: true
+        preprocessing:
+          type: object
+          additionalProperties: true
+        multi_sector:
+          type: object
+          additionalProperties: true
+        resonance_masking:
+          type: object
+          additionalProperties: true
+        period_confidence_report:
+          type: object
+          additionalProperties: true
+        harmonic_sweeping:
+          type: object
+          additionalProperties: true
+        inferred_stellar:
+          type: object
+          additionalProperties: true
+        inferred_orbital:
+          type: object
+          additionalProperties: true
+        shape_analysis:
+          type: object
+          additionalProperties: true
+        impact_parameter_report:
+          type: object
+          additionalProperties: true
+        secondary_eclipse_report:
+          type: object
+          additionalProperties: true
+        centroid_report:
+          type: object
+          additionalProperties: true
+        independent_cognitive_protocol:
+          type: object
+          additionalProperties: true
+        ttv_report:
+          type: object
+          additionalProperties: true
+        validation:
+          type: object
+          additionalProperties: true
+        summary:
+          type: string
+    AsyncStatusResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+        ready:
+          type: boolean
+        successful:
+          type: boolean
+        progress:
+          type: number
+          nullable: true
+        stage:
+          type: string
+          nullable: true
+        meta:
+          type: object
+          nullable: true
+          additionalProperties: true
+        result:
+          nullable: true
+        error:
+          type: string
+          nullable: true

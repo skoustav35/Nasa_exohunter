@@ -104,7 +104,18 @@ export function DiscoveryLab() {
             >
             <div className="absolute -right-16 -top-16 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/20 transition-all" />
             
-            <div className="text-sm font-bold text-emerald-400 tracking-wide uppercase mb-3">Unvetted Candidate</div>
+            <div className="flex flex-col gap-1.5 mb-3">
+              <div className="text-sm font-bold text-emerald-400 tracking-wide uppercase">
+                {d.thesis?.includes('APIE') || d.thesis?.includes('Inferred') || d.thesis?.includes('Stellar Density') 
+                  ? '🔬 Inferred Physics' 
+                  : 'Unvetted Candidate'}
+              </div>
+              {d.thesis?.includes('Aliasing Detected: Corrected') ? (
+                <div className="text-xs font-bold text-amber-400 tracking-wide uppercase">⚠️ Aliasing Detected: Period Corrected</div>
+              ) : d.thesis?.includes('Harmonic') ? (
+                <div className="text-xs font-bold text-indigo-400 tracking-wide uppercase">✨ Harmonic Check: PASSED</div>
+              ) : null}
+            </div>
             <div className="text-3xl font-display font-extrabold text-slate-100 mb-4">TIC {d.ticId}</div>
             
             <div className="text-[15px] font-medium text-slate-400 mb-8 line-clamp-3 leading-relaxed">
