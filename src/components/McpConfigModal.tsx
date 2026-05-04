@@ -73,20 +73,20 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 md:p-12">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/75 backdrop-blur-lg"
+            className="absolute inset-0 bg-black/80 backdrop-blur-xl"
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: 24 }}
+            initial={{ opacity: 0, scale: 0.9, y: 0 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 24 }}
-            transition={{ type: "spring", damping: 28, stiffness: 320 }}
-            className="relative w-full max-w-3xl max-h-[85vh] bg-slate-900/95 backdrop-blur-2xl border border-slate-700/80 rounded-[2rem] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
+            exit={{ opacity: 0, scale: 0.9, y: 0 }}
+            transition={{ type: "spring", damping: 30, stiffness: 400 }}
+            className="relative w-full max-w-3xl max-h-[90vh] bg-slate-900/98 backdrop-blur-3xl border border-slate-700/50 rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden"
           >
             {/* Gradient top bar */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
