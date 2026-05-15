@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -1966,6 +1965,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
 
   // ── Vite middleware (dev) or static serving (prod) ──────────
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: "spa",
