@@ -331,7 +331,7 @@ interface AsyncBridgeStatus {
 
 async function runPythonJson(args: string[]): Promise<any> {
   const { execFile } = await import("child_process");
-  const pythonBin = process.env.EXOHUNTER_PYTHON_BIN || "python";
+  const pythonBin = process.env.EXOHUNTER_PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
 
   return await new Promise((resolve, reject) => {
     execFile(
@@ -675,7 +675,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Query Stream (Firestore) ──────────────────────
   app.get("/api/query-stream", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 20;
       
@@ -704,7 +704,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Create Query Card ─────────────────────────────
   app.post("/api/query-card", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
       const { ticId, status, researcherName } = req.body;
       if (!ticId || !status || !researcherName) {
@@ -726,7 +726,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Get Discoveries ───────────────────────────────
   app.get("/api/discoveries", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 20;
       
@@ -755,7 +755,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Create Discovery Thesis ───────────────────────
   app.post("/api/discovery-thesis", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
       const { ticId, thesis, researcherName } = req.body;
       if (!ticId || !thesis || !researcherName) {
@@ -778,7 +778,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Create Rejection Thesis ─────────────────────────
   app.post("/api/rejection-thesis", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
       const { ticId, thesis, researcherName } = req.body;
       if (!ticId || !thesis || !researcherName) {
@@ -811,7 +811,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
       const execAsync = promisify(exec);
       
       // Execute the python script
-      const { stdout, stderr } = await execAsync(`python -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
+      const { stdout, stderr } = await execAsync(`${process.env.EXOHUNTER_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')} -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
       
       if (stderr && !stdout) {
         console.error("Python VF Error:", stderr);
@@ -839,7 +839,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
       const execAsync = promisify(exec);
       
       const durationArg = transitDuration ? ` ${transitDuration}` : "";
-      const { stdout, stderr } = await execAsync(`python -X utf8 verification_functions.py --profile ${ticId} ${period}${durationArg}`, { maxBuffer: 1024 * 1024 * 50 });
+      const { stdout, stderr } = await execAsync(`${process.env.EXOHUNTER_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')} -X utf8 verification_functions.py --profile ${ticId} ${period}${durationArg}`, { maxBuffer: 1024 * 1024 * 50 });
       
       if (stderr && !stdout) {
         console.error("Python APIE Error:", stderr);
@@ -939,7 +939,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Get Rejection Theses ──────────────────────────
   app.get("/api/rejection-theses", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where } = await import("firebase/firestore");
       const queryLimit = parseInt(req.query.limit as string) || 50;
       
@@ -968,7 +968,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Get All TIC IDs ───────────────────────────────
   app.get("/api/all-tics", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query } = await import("firebase/firestore");
       const q = query(collection(db, "queries"));
       const snapshot = await getDocs(q);
@@ -982,7 +982,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Get Successful TIC IDs ────────────────────────
   app.get("/api/successful-tics", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where } = await import("firebase/firestore");
       const q = query(collection(db, "queries"), where("status", "==", "New Discovery!"));
       const snapshot = await getDocs(q);
@@ -996,7 +996,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Edit Rejection Thesis ───────────────────────────
   app.put("/api/rejection-thesis/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, updateDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       const { thesis, researcherName } = req.body;
@@ -1020,7 +1020,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Delete Rejection Thesis ─────────────────────────
   app.delete("/api/rejection-thesis/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, deleteDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       
@@ -1041,7 +1041,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Leaderboard ───────────────────────────────────
   app.get("/api/leaderboard", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where } = await import("firebase/firestore");
       const q = query(collection(db, "queries"), where("status", "==", "New Discovery!"));
       const snapshot = await getDocs(q);
@@ -1062,7 +1062,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Edit Query Card ───────────────────────────────
   app.put("/api/query-card/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, updateDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       const { status, researcherName } = req.body;
@@ -1087,7 +1087,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Delete Query Card ─────────────────────────────
   app.delete("/api/query-card/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, deleteDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       
@@ -1109,7 +1109,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Edit Discovery Thesis ─────────────────────────
   app.put("/api/discovery-thesis/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, updateDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       const { thesis, researcherName } = req.body;
@@ -1133,7 +1133,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
   // ── MCP API: Delete Discovery Thesis ───────────────────────
   app.delete("/api/discovery-thesis/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { collection, getDocs, query, where, deleteDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       
@@ -1287,7 +1287,7 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
         
         // Auto-create query card for rejected candidate
         try {
-          const { db } = await import("./src/lib/firebase.js");
+          const { db } = await import("./src/lib/firebase.ts");
           const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
           await addDoc(collection(db, "queries"), {
             ticId, status: `Rejected: ${rejectionReason}`, researcherName: "S.Koustav (Built-in AI)",
@@ -1299,7 +1299,7 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
         try {
           const rejectionThesis = `# False Positive Report: TIC ${ticId}\n\n## SECTION 1: Identity & Metadata\n- **TIC ID:** ${ticId}\n- **Lead Researcher:** S.Koustav (Built-in AI)\n- **Log Date:** ${new Date().toISOString()}\n- **Discovery Status:** False Positive Archive\n\n## SECTION 2: Physical & Photometric Parameters\n- **Transit Depth ($\\delta$):** ${(measuredDepth * 100).toFixed(4)}%\n- **SNR:** ${snr.toFixed(2)}\n- **Transit Shape:** ${analysis.shape || "Unknown"}\n\n## SECTION 5: AI Reasoning & Grounding\n- **Rejection Reasoning:** ${rejectionReason}\n- **Agent 1 Confidence:** ${analysis.confidence}\n- **Secondary Eclipse Detected:** ${analysis.secondaryEclipseDetected ? "Yes" : "No"}`;
           
-          const { db } = await import("./src/lib/firebase.js");
+          const { db } = await import("./src/lib/firebase.ts");
           const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
           await addDoc(collection(db, "queries"), {
             ticId, thesis: rejectionThesis, researcherName: "S.Koustav (Built-in AI)",
@@ -1327,7 +1327,7 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
         const execAsync = promisify(exec);
 
         // Run resonance masking
-        const { stdout: vfOut } = await execAsync(`python -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
+        const { stdout: vfOut } = await execAsync(`${process.env.EXOHUNTER_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')} -X utf8 verification_functions.py ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
         vfResult = JSON.parse(vfOut.trim());
         sendEvent("verification", vfResult);
 
@@ -1337,7 +1337,7 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
 
         // Run full APIE physical profile
         sendEvent("status", { state: "Running Autonomous Physical Inference Engine (APIE)..." });
-        const { stdout: apieOut } = await execAsync(`python -X utf8 verification_functions.py --profile ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
+        const { stdout: apieOut } = await execAsync(`${process.env.EXOHUNTER_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')} -X utf8 verification_functions.py --profile ${ticId} ${period}`, { maxBuffer: 1024 * 1024 * 50 });
         apieResult = JSON.parse(apieOut.trim());
         sendEvent("physical_profile", apieResult);
       } catch (pyErr: any) {
@@ -1458,7 +1458,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
 
       // Auto-create query card
       try {
-        const { db } = await import("./src/lib/firebase.js");
+        const { db } = await import("./src/lib/firebase.ts");
         const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
         await addDoc(collection(db, "queries"), {
           ticId,
@@ -1471,7 +1471,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
 
       // Auto-save thesis
       try {
-        const { db } = await import("./src/lib/firebase.js");
+        const { db } = await import("./src/lib/firebase.ts");
         const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
         if (isKnown || isRetracted) {
           // Save as rejection thesis (known planet = rediscovery, retracted = anomaly)
@@ -1509,7 +1509,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
       // ── Step 4: Sync Assets to Cloud Database (Firestore) ──
       try {
         const { setDoc, doc } = await import("firebase/firestore");
-        const { db } = await import("./src/lib/firebase.js");
+        const { db } = await import("./src/lib/firebase.ts");
         
         // Sync Report content to Firestore
         const reportFile = `TIC_${ticId}_methodology.tex`;
@@ -1570,7 +1570,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   app.get("/api/reports", async (req, res) => {
     try {
       const { getDocs, collection } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const querySnapshot = await getDocs(collection(db, "reports"));
       const files = querySnapshot.docs.map(doc => doc.id);
       res.json({ files });
@@ -1583,7 +1583,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
     try {
       const { filename } = req.params;
       const { getDoc, doc } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const docRef = doc(db, "reports", filename);
       const docSnap = await getDoc(docRef);
 
@@ -1599,7 +1599,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   app.get("/api/plots", async (req, res) => {
     try {
       const { getDocs, collection } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const querySnapshot = await getDocs(collection(db, "plots"));
       const files = querySnapshot.docs.map(doc => doc.id);
       res.json({ files });
@@ -1612,7 +1612,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   app.get("/api/plots-data", async (req, res) => {
     try {
       const { getDocs, collection } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const querySnapshot = await getDocs(collection(db, "plots"));
       const plots = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       res.json({ plots });
@@ -1626,7 +1626,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
     try {
       const { filename } = req.params;
       const { getDoc, doc } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const docRef = doc(db, "plots", filename);
       const docSnap = await getDoc(docRef);
 
@@ -1660,7 +1660,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
     try {
       const ticId = req.params.ticId;
       const { getDocs, collection, query, where } = await import("firebase/firestore");
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
 
       // Find thesis for this TIC — try discovery first, then rejection
       let q = query(collection(db, "queries"), where("ticId", "==", ticId), where("status", "==", "New Discovery!"));
@@ -1807,7 +1807,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // Upload a vision image for a TIC ID + slot
   app.post("/api/vision-images", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { setDoc, doc, serverTimestamp } = await import("firebase/firestore");
       const { ticId, imageSlot, imageData, prompt, title, thesisType, researcherName } = req.body;
       if (!ticId || !imageSlot || !imageData) {
@@ -1837,7 +1837,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // Get all vision images for a TIC ID
   app.get("/api/vision-images/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { getDocs, collection, query, where } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       const q = query(collection(db, "vision_images"), where("ticId", "==", ticId));
@@ -1852,7 +1852,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // List all TIC IDs with vision images
   app.get("/api/vision-images", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { getDocs, collection } = await import("firebase/firestore");
       const snap = await getDocs(collection(db, "vision_images"));
       const ticMap: Record<string, { ticId: string; thesisType: string; imageCount: number; slots: string[] }> = {};
@@ -1873,7 +1873,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // Update a specific vision image
   app.put("/api/vision-images/:ticId/:slot", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { updateDoc, doc, serverTimestamp } = await import("firebase/firestore");
       const { ticId, slot } = req.params;
       const { imageData, prompt, title, researcherName } = req.body;
@@ -1893,7 +1893,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // Delete all vision images for a TIC ID
   app.delete("/api/vision-images/:ticId", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { getDocs, collection, query, where, deleteDoc, doc } = await import("firebase/firestore");
       const ticId = req.params.ticId;
       const q = query(collection(db, "vision_images"), where("ticId", "==", ticId));
@@ -1910,7 +1910,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // Delete a single vision image slot
   app.delete("/api/vision-images/:ticId/:slot", async (req, res) => {
     try {
-      const { db } = await import("./src/lib/firebase.js");
+      const { db } = await import("./src/lib/firebase.ts");
       const { deleteDoc, doc } = await import("firebase/firestore");
       const { ticId, slot } = req.params;
       const docId = `${ticId}_${slot}`;
