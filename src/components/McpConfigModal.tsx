@@ -13,7 +13,7 @@ const MCP_CONFIG = `{
       "command": "node",
       "args": ["./mcp-server/dist/index.js"],
       "env": {
-        "EXOHUNTER_API_URL": "<YOUR_NGROK_URL>"
+        "EXOHUNTER_API_URL": "<YOUR_RENDER_URL>"
       }
     }
   }
@@ -185,19 +185,20 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="bg-sky-500/10 border border-sky-500/30 rounded-2xl p-5"
+                      className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5"
                     >
-                      <h4 className="flex items-center gap-2 text-sm font-bold text-sky-300 uppercase tracking-widest mb-4">
-                        <Terminal className="w-4 h-4" /> 1. Cloud Tunnel (Ngrok)
+                      <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-300 uppercase tracking-widest mb-4">
+                        <Terminal className="w-4 h-4" /> 1. Cloud Engine (Render)
                       </h4>
                       <p className="text-slate-300 text-sm leading-relaxed mb-3 font-medium">
-                        To expose your local Scientific Engine to the public, run this command in your terminal:
+                        Your Scientific Engine is now hosted 24/7 in the cloud. Get your permanent URL from your Render dashboard:
                       </p>
-                      <div className="bg-slate-950/50 border border-slate-800 p-3 rounded-xl font-mono text-sm text-sky-400 mb-4 select-all cursor-pointer hover:bg-slate-950 transition-colors">
-                        npx ngrok http 3000
+                      <div className="bg-slate-950/50 border border-slate-800 p-3 rounded-xl font-mono text-sm text-emerald-400 mb-4 select-all cursor-pointer hover:bg-slate-950 transition-colors flex items-center justify-between">
+                        <span>https://your-service.onrender.com</span>
+                        <ExternalLink className="w-3.5 h-3.5 opacity-50" />
                       </div>
                       <p className="text-slate-400 text-xs font-medium">
-                        Replace <code className="text-sky-300 bg-sky-950/50 px-1 rounded">&lt;YOUR_NGROK_URL&gt;</code> in the config above with the public URL Ngrok gives you (e.g., https://abc.ngrok-free.app).
+                        Replace <code className="text-emerald-300 bg-emerald-950/50 px-1 rounded">&lt;YOUR_RENDER_URL&gt;</code> in the config above with your live Render URL. No local tunneling is required.
                       </p>
                     </motion.div>
 
