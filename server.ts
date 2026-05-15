@@ -396,6 +396,15 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Health / debug endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      engine: "Sarkar ExoHunter v5.0",
+      node_version: process.version
+    });
+  });
+
   app.get("/api/env-test", (req, res) => {
     res.json({
       hasKey: !!process.env.GEMINI_API_KEY,
