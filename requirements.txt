@@ -6,3 +6,5 @@ celerite2>=0.3
 celery[redis]>=5.4
 redis>=5.0
 scipy>=1.14
+batman-package>=2.4.9
+emcee>=3.1

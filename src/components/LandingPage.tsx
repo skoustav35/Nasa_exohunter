@@ -57,7 +57,7 @@ export default function LandingPage({ onEnter }: { onEnter: () => void }) {
             className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-white/5 border border-white/10 backdrop-blur-md mb-8 shadow-lg shadow-indigo-500/10"
           >
             <Sparkles className="w-4 h-4 text-amber-300" />
-            <span className="text-sm font-bold tracking-wider uppercase text-indigo-100">NASA MAST Archive Integration</span>
+            <span className="text-sm font-bold tracking-wider uppercase text-indigo-100">v5.0 "God-Mode" Precision</span>
           </motion.div>
           
           <h1 className="text-6xl md:text-8xl font-display font-extrabold tracking-tighter mb-8 leading-[1.1]">
@@ -112,7 +112,7 @@ export default function LandingPage({ onEnter }: { onEnter: () => void }) {
           className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mt-24 w-full"
         >
           {[
-            { icon: Database, title: "Real Data Ingestion", desc: "Fetches authentic phase-folded light curves directly from the NASA MAST Archive (Exo.MAST API) for any TESS TIC target." },
+            { icon: Database, title: "Sovereign Firewall", desc: "Data transit secured via Supabase Edge Function zero-touch architecture, sanitizing Impact Parameters and Keplerian Durations before logging." },
             { icon: BrainCircuit, title: "Multi-Agent Verifier", desc: "Dual Gemini models — Flash for rapid statistical filtering, Pro with Google Search grounding for deep archive verification." },
             { icon: Telescope, title: "Thesis-Grade Output", desc: "Generates structured discovery theses with transit modeling, planetary radius estimates, false-positive assessment, and habitability analysis." }
           ].map((feature, i) => (

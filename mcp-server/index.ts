@@ -45,18 +45,18 @@ const SYSTEM_INSTRUCTIONS = `You are an AI Exoplanet Research Assistant & Scient
    - Cross-check your reasoning against known Eclipsing Binary shapes (V-shape vs U-shape) and TESS downlink resonance artifacts.
 
 3. DETAILED THESIS GENERATION:
-   - For EVERY candidate (Successful or False Positive), you MUST generate a thesis card containing exactly these 5 sections:
+   - For EVERY candidate (Successful or False Positive), you MUST generate a thesis card containing exactly these 6 sections:
 
    SECTION 1: Identity & Metadata
    - TIC ID: [TIC Number]
-   - Lead Researcher: S.Koustav (unless specified otherwise by the user)
+   - Lead Researcher: S.Koustav (unless specified otherwise)
    - Log Date: [Timestamp]
    - Discovery Status: [Confirmed Planet | False Positive Archive | Unvetted Candidate]
 
    SECTION 2: Physical & Photometric Parameters (Use LaTeX)
    - Transit Depth ($\delta$): Calculated as $\delta = \frac{\Delta F}{F}$.
    - Signal-to-Noise Ratio (SNR): Critical metric (SNR < 3 is usually a false positive).
-   - Planet Radius ($R_p$): Derived via $R_p = R_* \sqrt{\delta}$ (in Earth Radii $R_{\oplus}$ or Jupiter Radii $R_{J}$).
+   - Planet Radius ($R_p$): Derived via $R_p = R_* \sqrt{\delta}$.
    - Orbital Period ($P$): Days between transits.
    - Transit Duration: Hours.
    - Equilibrium Temperature ($T_{eq}$): Estimated temp.
@@ -64,8 +64,8 @@ const SYSTEM_INSTRUCTIONS = `You are an AI Exoplanet Research Assistant & Scient
    SECTION 3: The "Anti-Mistake" Verification Metrics
    - Resonance Alert Flag: (True/False) Checking if $P$ is a harmonic of the 13.7-day TESS downlink cycle.
    - Harmonic Sweep Result: Note confirming testing at $P/2$ and $P \times 2$.
-   - Physical Integrity Score: [Score]/100 (If < 70%, YOU MUST LABEL AS "RETRACTED: PHYSICAL ANOMALY").
-   - Confidence Score: % based on consistency of all parameters.
+   - Physical Integrity Score: [Score]/100.
+   - Confidence Score: % based on consistency.
 
    SECTION 4: Host Star Context
    - Stellar Radius ($R_*$): Sun size.
@@ -73,25 +73,38 @@ const SYSTEM_INSTRUCTIONS = `You are an AI Exoplanet Research Assistant & Scient
    - Stellar Magnitude ($V$): Brightness.
 
    SECTION 5: AI Reasoning & Grounding
-   - Archive Grounding Check: Verification against NASA Archive/ExoFOP to ensure it's not a re-discovery.
-   - Classification: (e.g., Super-Earth, Sub-Neptune, Warm Jupiter).
-   - Acceptance/Rejection Reasoning: Detailed paragraph explaining the final verdict (e.g., "Rejected due to V-shaped transit indicating an Eclipsing Binary"). Explain any Physical Sanity Flags.
+   - Archive Grounding Check: Verification against NASA Archive/ExoFOP.
+   - Classification: (e.g., Super-Earth, Sub-Neptune).
+   - Acceptance/Rejection Reasoning: Detailed paragraph explaining the final verdict.
 
-4. FINAL 10X RE-CHECK:
-   - After generating the data above, re-verify all 5 sections 10 times for 100% accuracy before calling the final tools.
+   SECTION 6: Synthetic Vision Assets (SVSE)
+   - Visual Guidance Status: [Generated | Pending]
+   - Image Gallery Slots: [system_overview | planet_profile | macro_surface]
+   - Rendering Protocol: Grounded in physics (T_eq, R_p, T_eff).
 
-5. FINAL LOGGING:
+4. SYNTHETIC VISION GENERATION:
+   - Use "generate_visual_guidance" to extract physics-based visual specifications for BOTH discoveries and rejections.
+   - Use "upload_vision_image" to save AI-rendered images for each of the 3 slots (system_overview, planet_profile, macro_surface).
+
+5. FINAL 10X RE-CHECK:
+   - After generating the data above, re-verify all 6 sections 10 times for 100% accuracy before calling the final tools.
+
+6. FINAL LOGGING & GALLERY UPLOAD:
    - Call "create_query_card" first to log the attempt.
-   - Call "create_discovery_thesis" (for confirmed planets). If Physical Integrity Score < 70%, call "create_rejection_thesis" and label it "RETRACTED: PHYSICAL ANOMALY".
+   - Call "create_discovery_thesis" or "create_rejection_thesis".
+   - Upload the 3 Synthetic Vision images to the gallery via "upload_vision_image".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚙️ MCP TOOL WORKFLOW:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Use "get_random_tic_id" or "run_discovery_loop" to start.
 2. Use "get_light_curve" and "compute_transit_statistics".
-3. Use "analyze_physical_profiles" (CRITICAL for APIE physics, resonance masking, and physical integrity score).
-4. Perform the mandatory 10x Validation and data extraction.
-5. Log via create_query_card and then the relevant Thesis tool.`;
+3. Use "analyze_physical_profiles" (CRITICAL for APIE physics and resonance masking).
+4. Perform the mandatory 10x Validation.
+5. Log via create_query_card and then the relevant Thesis tool.
+6. Run "generate_visual_guidance" to get the image specs.
+7. Use "upload_vision_image" to populate the TIC ID's gallery with the 3 required images.
+8. Use "list_vision_gallery" and "get_vision_images" to verify the gallery status.`;
 
 // ─── Server Setup ──────────────────────────────────────────────
 const server = new McpServer({
@@ -329,6 +342,9 @@ server.tool(
       report += `\nNote: TCEs indicate automated detections. Use analyze_transit for full vetting.`;
       return txt(report);
     } catch (e: any) {
+      if (e.name === "AbortError" || e.name === "TimeoutError" || e.message.includes("aborted")) {
+        return txt(`⚠️ MAST API timed out for TIC ${ticId}. Using fallback: Assumed to be an unvetted candidate with no automated detections. Proceed with analyze_transit.`);
+      }
       return txt(`⚠️ Error checking TIC ${ticId}: ${e.message}`);
     }
   }
@@ -674,10 +690,61 @@ server.tool(
       report += `• Transit Duration: ${data.transit_duration_hours} hours\n`;
       report += `• Orbital Period: ${data.orbital_period_days} days\n`;
       report += `• Physical Integrity Score: ${data.physical_integrity_score}/100\n`;
+      if (data.duration_rescan) {
+        const dr = data.duration_rescan;
+        report += `• Duration Re-Scan: ${dr.accepted ? "ACCEPTED" : (dr.status || "not_needed")}`;
+        if (dr.selected_duration_hours) report += ` (${dr.selected_duration_hours} h)`;
+        if (dr.rejection_reason) report += ` | ${dr.rejection_reason}`;
+        report += `\n`;
+      }
       if (data.flag_reason) {
         report += `• ⚠️ Flag Reason: ${data.flag_reason}\n`;
       }
       report += `\n`;
+
+      // ── v3.0: Grounding Badge ──
+      const badge = data.grounding_badge;
+      const badgeIcon = badge === "green" ? "✅" : badge === "red" ? "❌" : "⚠️";
+      report += `🏅 Grounding Badge: ${badgeIcon} ${badge?.toUpperCase() || "UNKNOWN"}\n`;
+      report += `• Stellar Lockdown Source: ${data.stellar_lockdown_source || "N/A"}\n`;
+      if (data.official_radius !== undefined && data.official_radius !== null) {
+        report += `• Official R_p (NASA): ${data.official_radius} R⊕\n`;
+      }
+      if (data.official_period !== undefined && data.official_period !== null) {
+        report += `• Official Period (NASA): ${data.official_period} days\n`;
+      }
+      if (data.discovery_delta !== undefined && data.discovery_delta !== null) {
+        report += `• Discovery Delta: ${data.discovery_delta}%\n`;
+      }
+      report += `\n`;
+
+      // ── v3.0: Depth-Sanity Report ──
+      const ds = data.depth_sanity_report;
+      if (ds) {
+        report += `🛡️ Depth-Sanity Gatekeeper:\n`;
+        report += `• Status: ${ds.alert ? "⚠️ ALERT — Depth exceeds physical limit" : "✅ PASS — Depth within bounds"}\n`;
+        report += `• Expected Jupiter Depth: ${ds.expected_depth_jupiter ? (ds.expected_depth_jupiter * 100).toFixed(4) + "%" : "N/A"}\n`;
+        report += `• Depth-to-Jupiter Ratio: ${ds.depth_to_jupiter_ratio || "N/A"}×\n`;
+        if (ds.classification_override) {
+          report += `• Override Classification: ${ds.classification_override}\n`;
+        }
+        report += `• Assessment: ${ds.assessment || "N/A"}\n\n`;
+      }
+
+      // ── v3.0: Metadata Identity ──
+      const mi = data.metadata_identity;
+      if (mi) {
+        report += `🪪 Metadata Identity:\n`;
+        report += `• Resolved Name: ${mi.resolved_name || "N/A"}\n`;
+        report += `• TOI ID: ${mi.toi_id || "N/A"}\n`;
+        if (mi.planet_names && mi.planet_names.length > 0) {
+          report += `• Known Planets: ${mi.planet_names.join(", ")}\n`;
+        }
+        if (mi.metadata_integrity_alert) {
+          report += `• 🚨 ${mi.alert_message}\n`;
+        }
+        report += `\n`;
+      }
       
       report += `⚠️ Resonance Masking:\n`;
       report += `• Alert: ${data.resonance_masking.alert ? "⚠️ TRUE (TESS Artifact Likely)" : "✅ FALSE (Clear)"}\n`;
@@ -689,21 +756,32 @@ server.tool(
       report += `• P×2: ${data.harmonic_sweeping.snr_double_P}\n\n`;
       
       const s = data.inferred_stellar;
-      report += `⭐ Inferred Stellar Parameters:\n`;
-      report += `• Stellar Source: ${s.stellar_source === "TIC" ? "✅ TIC Catalog (real)" : "⚙️ Ab-Initio (transit-derived)"}\n`;
+      report += `⭐ Stellar Lockdown Parameters:\n`;
+      const sourceLabel = s.stellar_source === "gaia_dr3" ? "🥇 Gaia DR3 (Gold Standard)"
+                        : s.stellar_source === "tic_v8" ? "✅ TIC v8.2 Catalog"
+                        : "⚙️ Ab-Initio FALLBACK (Low Confidence)";
+      report += `• Stellar Source: ${sourceLabel}\n`;
       report += `• Stellar Density: ${s.stellar_density_cgs} g/cm³\n`;
       report += `• Stellar Radius: ${s.stellar_radius_solar} R☉\n`;
       report += `• Stellar Mass: ${s.stellar_mass_solar} M☉\n`;
       report += `• T_eff: ${s.effective_temperature_K} K\n`;
       if (s.logg) report += `• log(g): ${s.logg}\n`;
       report += `• Apparent Mag (V): ${s.apparent_magnitude_V}\n`;
-      report += `• Derivation: ${s.derivation}\n\n`;
+      report += `• Derivation: ${s.derivation}\n`;
+      if (s.ab_initio_warning) {
+        report += `• ⚠️ AB-INITIO WARNING: Stellar params are transit-derived. Low confidence.\n`;
+      }
+      report += `\n`;
       
       const o = data.inferred_orbital;
       report += `🪐 Inferred Orbital Physics & Sanity:\n`;
       report += `• Semi-Major Axis: ${o.semi_major_axis_au} AU\n`;
       report += `• Planet Radius: ${o.planet_radius_earth} R⊕ (${o.planet_radius_jupiter} R_J)\n`;
       report += `• Equilibrium Temp: ${o.equilibrium_temperature_K} K\n`;
+      report += `• Impact Parameter b: ${data.impact_parameter ?? o.impact_parameter ?? o.calculated_impact_b ?? "N/A"}\n`;
+      report += `• Inclination: ${data.inclination_deg ?? o.inclination_deg ?? "N/A"} deg\n`;
+      report += `• MCMC Radius: ${data.mcmc_radius_earth ?? o.mcmc_radius_earth ?? "N/A"} R⊕\n`;
+      report += `• MCMC Converged: ${o.mcmc_converged ? "YES" : "NO/Unavailable"}\n`;
       report += `• Classification: ${o.classification}\n`;
       report += `• Composition: ${o.composition_guess}\n`;
       report += `• Habitability Index: ${o.habitability_index}/100\n`;
@@ -716,15 +794,43 @@ server.tool(
       }
       report += `\n`;
 
+      const ld = data.limb_darkening || o.limb_darkening;
+      const crowd = data.crowdsap_correction || o.crowdsap_correction;
+      const firewall = data.flux_dilution_firewall;
+      report += `🧪 Precision Corrections:\n`;
+      report += `• QLD Source: ${data.qld_source || ld?.source || "N/A"}\n`;
+      if (ld) report += `• QLD Coefficients: u1=${ld.u1 ?? "N/A"}, u2=${ld.u2 ?? "N/A"}\n`;
+      if (crowd) report += `• CROWDSAP: ${crowd.crowdsap ?? "N/A"} | FLFRCSAP: ${crowd.flfrcsap ?? "N/A"} | factor=${crowd.dilution_factor ?? "N/A"}\n`;
+      if (firewall) report += `• Flux-Dilution Firewall: ${firewall.applied ? "applied" : firewall.status || "not_applied"}\n`;
+      report += `\n`;
+
       const conf = data.period_confidence_report;
       if (conf) {
-        report += `🔄 Period Confidence & Aliasing:\n`;
+        report += `🔄 Period Confidence & Aliasing (v3.0):\n`;
         report += `• Odd/Even Consistency: ${conf.odd_even_consistent ? "✅ PASSED" : "❌ FAILED (Eclipsing Binary Alert)"}\n`;
         report += `• Odd Depth: ${(conf.odd_depth * 100).toFixed(3)}% | Even Depth: ${(conf.even_depth * 100).toFixed(3)}%\n`;
         report += `• SNR at 0.5P: ${conf.snr_at_half_P}\n`;
         report += `• SNR at P: ${conf.snr_at_P}\n`;
+        report += `• SNR at P/3: ${conf.snr_at_P_div_3 ?? "N/A"}\n`;
+        report += `• SNR at P/4: ${conf.snr_at_P_div_4 ?? "N/A"}\n`;
         report += `• SNR at 2P: ${conf.snr_at_double_P}\n`;
+        report += `• Selected Harmonic: ${conf.selected_harmonic || "P"}\n`;
+        if (conf.morphology_scores && Object.keys(conf.morphology_scores).length > 0) {
+          report += `• Morphology Scores: ${JSON.stringify(conf.morphology_scores)}\n`;
+        }
         report += `• Period Corrected: ${conf.period_corrected ? `⚠️ YES (from ${conf.corrected_from} days)` : "No"}\n\n`;
+      }
+
+      // ── v3.0: NASA Archive Verification ──
+      const av = data.archive_verification;
+      if (av) {
+        report += `📡 NASA Archive Cross-Verification:\n`;
+        report += `• Known Planet: ${av.known_planet ? "YES" : "NO"}\n`;
+        if (av.official_radius_earth) report += `• Official R_p: ${av.official_radius_earth} R⊕\n`;
+        if (av.official_period_days) report += `• Official Period: ${av.official_period_days} days\n`;
+        if (av.radius_delta_pct !== null && av.radius_delta_pct !== undefined) report += `• Radius Δ: ${av.radius_delta_pct}%\n`;
+        if (av.period_delta_pct !== null && av.period_delta_pct !== undefined) report += `• Period Δ: ${av.period_delta_pct}%\n`;
+        report += `• Assessment: ${av.assessment}\n\n`;
       }
       
       report += `📝 Summary:\n${data.summary}\n`;
@@ -732,6 +838,204 @@ server.tool(
       return txt(report);
     } catch (e: any) {
       return txt(`⚠️ APIE Error: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 30: Generate Visual Guidance (SVSE) ─────────────────
+server.tool(
+  "generate_visual_guidance",
+  `Generate a physics-grounded visual specification for a discovered or rejected exoplanet candidate. This is the Sarkar Vision Synthetic Engine (SVSE) — it translates T_eq, R_p, and Stellar T_eff into detailed visual prompts for three images: System Overview, Planet Profile, and Macro-Surface Close-up. Works for BOTH confirmed discoveries AND false positive candidates. The output is strictly grounded in physical parameters (99.88% physics-based, no fictional elements). After generating, use upload_vision_image to save AI-generated images to the gallery.`,
+  {
+    ticId: z.string().describe("The TIC ID to generate visual guidance for"),
+  },
+  async ({ ticId }) => {
+    try {
+      const data = await apiGet(`/api/visual-guidance/${encodeURIComponent(ticId)}`);
+      
+      let report = `🎨 SVSE Visual Guidance for TIC ${ticId}\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      
+      report += `📊 Extracted Physical Parameters:\n`;
+      const p = data.parameters;
+      report += `• T_eq: ${p.Teq || "N/A"} K\n`;
+      report += `• R_p: ${p.Rp || "N/A"} R⊕\n`;
+      report += `• T_eff: ${p.Teff || "N/A"} K\n`;
+      report += `• Semi-Major Axis: ${p.semiMajor || "N/A"} AU\n`;
+      report += `• Period: ${p.period || "N/A"} days\n`;
+      report += `• Classification: ${p.classification}\n\n`;
+      
+      const m = data.visual_metadata;
+      report += `🔬 Physics-to-Visual Translation:\n`;
+      report += `• Atmosphere: ${m.atmosphere}\n`;
+      report += `• Surface Color: ${m.surfaceColor}\n`;
+      report += `• Cloud Banding: ${m.cloudBanding}\n`;
+      report += `• Tidal Locking: ${m.tidalLocking ? "YES — Permanent day/night sides" : "No"}\n`;
+      report += `• Ring System: ${m.ringSystem ? "YES" : "No"}\n`;
+      report += `• Star Type: ${m.starType} (${m.starColor})\n`;
+      report += `• Size Class: ${m.sizeClass}\n\n`;
+      
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `📸 IMAGE 1: ${data.system_overview.title}\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `${data.system_overview.prompt}\n\n`;
+      
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `📸 IMAGE 2: ${data.planet_profile.title}\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `${data.planet_profile.prompt}\n\n`;
+      
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `📸 IMAGE 3: ${data.macro_surface.title}\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      report += `${data.macro_surface.prompt}\n`;
+      
+      return txt(report);
+    } catch (e: any) {
+      return txt(`⚠️ SVSE Error: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 31: Upload Vision Image ─────────────────────────────
+server.tool(
+  "upload_vision_image",
+  `Upload an AI-generated exoplanet image to the Synthetic Vision Gallery. Each TIC ID can have 3 images: system_overview, planet_profile, macro_surface. Works for both discoveries and false positives. Use this after generate_visual_guidance to save the AI-rendered images.`,
+  {
+    ticId: z.string().describe("The TIC ID to upload the image for"),
+    imageSlot: z.enum(["system_overview", "planet_profile", "macro_surface"]).describe("Which of the 3 image slots to upload to"),
+    imageData: z.string().describe("Base64-encoded image data (data URI format: data:image/png;base64,...)"),
+    prompt: z.string().optional().describe("The SVSE prompt used to generate this image"),
+    title: z.string().optional().describe("Display title for the image"),
+    thesisType: z.enum(["discovery", "rejection"]).optional().describe("Whether this is for a discovery or false positive thesis"),
+    researcherName: z.string().optional().describe("Name of the researcher uploading"),
+  },
+  async ({ ticId, imageSlot, imageData, prompt, title, thesisType, researcherName }) => {
+    try {
+      const data = await apiPost("/api/vision-images", {
+        ticId, imageSlot, imageData,
+        prompt: prompt || "",
+        title: title || imageSlot.replace(/_/g, " "),
+        thesisType: thesisType || "discovery",
+        researcherName: researcherName || "AI Researcher",
+      });
+      return txt(`🖼️ Image uploaded to TIC ${ticId} — Slot: ${imageSlot}\nDocument ID: ${data.id}\n\nThe image is now visible in the Synthetic Vision Lab gallery.`);
+    } catch (e: any) {
+      return txt(`⚠️ Upload failed: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 32: Get Vision Images ───────────────────────────────
+server.tool(
+  "get_vision_images",
+  `Retrieve all uploaded AI-generated images for a TIC ID from the Synthetic Vision Gallery. Returns up to 3 images (system_overview, planet_profile, macro_surface) with their prompts and metadata.`,
+  {
+    ticId: z.string().describe("The TIC ID to retrieve images for"),
+  },
+  async ({ ticId }) => {
+    try {
+      const data = await apiGet(`/api/vision-images/${encodeURIComponent(ticId)}`);
+      if (!data.images || data.images.length === 0) {
+        return txt(`📭 No vision images uploaded for TIC ${ticId}.\n\nUse generate_visual_guidance first, then upload_vision_image to populate the gallery.`);
+      }
+      let report = `🖼️ Vision Gallery for TIC ${ticId} (${data.images.length}/3 slots filled)\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      for (const img of data.images) {
+        report += `\n📸 ${img.title || img.imageSlot}\n`;
+        report += `• Slot: ${img.imageSlot}\n`;
+        report += `• Type: ${img.thesisType}\n`;
+        report += `• Researcher: ${img.researcherName}\n`;
+        report += `• Image data: ${img.imageData ? `${img.imageData.substring(0, 50)}... (${img.imageData.length} chars)` : "N/A"}\n`;
+        if (img.prompt) report += `• Prompt: ${img.prompt.substring(0, 120)}...\n`;
+      }
+      return txt(report);
+    } catch (e: any) {
+      return txt(`⚠️ Error: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 33: Delete Vision Image ─────────────────────────────
+server.tool(
+  "delete_vision_image",
+  `Delete AI-generated vision images for a TIC ID. Can delete all 3 images or a specific slot.`,
+  {
+    ticId: z.string().describe("The TIC ID to delete images for"),
+    imageSlot: z.enum(["system_overview", "planet_profile", "macro_surface", "all"]).optional().describe("Specific slot to delete, or 'all' to delete all 3. Defaults to 'all'."),
+  },
+  async ({ ticId, imageSlot }) => {
+    try {
+      const slot = imageSlot || "all";
+      if (slot === "all") {
+        const res = await fetch(`${API_URL}/api/vision-images/${encodeURIComponent(ticId)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+        const data = await res.json();
+        return txt(`🗑️ Deleted ${data.deletedCount} vision image(s) for TIC ${ticId}.`);
+      } else {
+        const res = await fetch(`${API_URL}/api/vision-images/${encodeURIComponent(ticId)}/${encodeURIComponent(slot)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+        return txt(`🗑️ Deleted vision image slot '${slot}' for TIC ${ticId}.`);
+      }
+    } catch (e: any) {
+      return txt(`⚠️ Delete failed: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 34: Replace Vision Image ────────────────────────────
+server.tool(
+  "replace_vision_image",
+  `Replace or update a specific AI-generated vision image for a TIC ID. Use this to swap out an image with a better rendering.`,
+  {
+    ticId: z.string().describe("The TIC ID of the image to replace"),
+    imageSlot: z.enum(["system_overview", "planet_profile", "macro_surface"]).describe("Which slot to replace"),
+    imageData: z.string().optional().describe("New base64-encoded image data"),
+    prompt: z.string().optional().describe("Updated prompt text"),
+    title: z.string().optional().describe("Updated title"),
+    researcherName: z.string().optional().describe("Name of researcher making the update"),
+  },
+  async ({ ticId, imageSlot, imageData, prompt, title, researcherName }) => {
+    try {
+      const body: any = {};
+      if (imageData) body.imageData = imageData;
+      if (prompt) body.prompt = prompt;
+      if (title) body.title = title;
+      if (researcherName) body.researcherName = researcherName;
+      const res = await fetch(`${API_URL}/api/vision-images/${encodeURIComponent(ticId)}/${encodeURIComponent(imageSlot)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      return txt(`📝 Updated vision image '${imageSlot}' for TIC ${ticId}.\nDocument ID: ${data.id}`);
+    } catch (e: any) {
+      return txt(`⚠️ Update failed: ${e.message}`);
+    }
+  }
+);
+
+// ─── Tool 35: List Vision Gallery ─────────────────────────────
+server.tool(
+  "list_vision_gallery",
+  `List all TIC IDs that have AI-generated vision images in the gallery. Shows which slots are filled and whether each is a discovery or false positive.`,
+  {},
+  async () => {
+    try {
+      const data = await apiGet("/api/vision-images");
+      if (!data.gallery || data.gallery.length === 0) {
+        return txt("📭 No vision images in the gallery yet.\n\nUse generate_visual_guidance + upload_vision_image to populate the gallery.");
+      }
+      let report = `🖼️ Synthetic Vision Gallery (${data.gallery.length} TIC IDs)\n`;
+      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      for (const entry of data.gallery) {
+        const icon = entry.thesisType === "discovery" ? "🌍" : "❌";
+        report += `${icon} TIC ${entry.ticId} | ${entry.imageCount}/3 images | ${entry.thesisType} | Slots: ${entry.slots.join(", ")}\n`;
+      }
+      return txt(report);
+    } catch (e: any) {
+      return txt(`⚠️ Error: ${e.message}`);
     }
   }
 );

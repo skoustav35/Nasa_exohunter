@@ -9,7 +9,98 @@ from typing import Iterable, List, Optional, Sequence
 G = 6.674e-11
 R_SUN = 6.957e8
 R_EARTH = 6.371e6
+R_JUPITER_EARTH = 11.2  # Jupiter radius in Earth radii
 AU = 1.496e11
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEPTH-SANITY GATEKEEPER  (v3.0)
+# ═══════════════════════════════════════════════════════════════
+
+def check_depth_sanity(
+    observed_depth: Optional[float],
+    stellar_radius_solar: Optional[float],
+) -> dict:
+    """Check whether the observed transit depth is physically plausible.
+
+    Astrophysical basis:
+    The maximum transit depth a planet can produce is limited by the size
+    of its host star.  For a given R_*, the expected depth for a planet of
+    radius R_p is:
+
+        δ = (R_p / R_*)²
+
+    We compute expected depths for:
+        • 1.0 R⊕  — smallest meaningful signal
+        • 11.2 R⊕ (Jupiter) — largest known planet radii
+
+    If the observed depth exceeds **5× the Jupiter depth**, the signal
+    almost certainly originates from stellar spots, instrument glints,
+    or an eclipsing binary — NOT a transiting planet.
+
+    Example: TIC 382200953 (TOI-125 b) has R_* ≈ 1.17 R☉.
+        δ_jupiter ≈ (11.2 × 6.371e6 / (1.17 × 6.957e8))² ≈ 0.0079 (0.79%)
+        5 × δ_jupiter ≈ 3.95%.
+        Observed 1.3% < 3.95% → passes (but the REAL transit is only 0.08%).
+    For a star with R_* = 0.5 R☉:
+        δ_jupiter ≈ 0.0419 (4.19%), 5× = 20.9%
+    """
+    if observed_depth is None or stellar_radius_solar is None:
+        return {
+            "status": "unavailable",
+            "override_reject": False,
+            "reason": "Observed depth or stellar radius not provided.",
+        }
+
+    if stellar_radius_solar <= 0 or observed_depth <= 0:
+        return {
+            "status": "unavailable",
+            "override_reject": False,
+            "reason": "Non-positive depth or stellar radius.",
+        }
+
+    r_star_m = float(stellar_radius_solar) * R_SUN
+
+    # Expected depth for a 1.0 R_earth planet
+    depth_earth = (R_EARTH / r_star_m) ** 2
+
+    # Expected depth for a Jupiter-sized (11.2 R_earth) planet
+    depth_jupiter = (R_JUPITER_EARTH * R_EARTH / r_star_m) ** 2
+
+    # Alert threshold: 5× the Jupiter depth
+    alert_threshold = 5.0 * depth_jupiter
+    depth_ratio = float(observed_depth) / depth_jupiter if depth_jupiter > 0 else 0.0
+
+    is_alert = float(observed_depth) > alert_threshold
+    override_reject = is_alert
+
+    if is_alert:
+        assessment = (
+            f"DEPTH ALERT: Observed depth ({observed_depth * 100:.4f}%) "
+            f"exceeds 5× the maximum Jupiter-depth ({depth_jupiter * 100:.4f}%) "
+            f"for R_★ = {stellar_radius_solar:.3f} R☉. "
+            f"Signal classified as 'Likely Stellar Spot / Instrument Glint'."
+        )
+    else:
+        assessment = (
+            f"Depth is within physical bounds. "
+            f"Observed: {observed_depth * 100:.4f}%, "
+            f"Max Jupiter: {depth_jupiter * 100:.4f}%, "
+            f"Ratio: {depth_ratio:.2f}× Jupiter."
+        )
+
+    return {
+        "status": "ok",
+        "expected_depth_earth": round(depth_earth, 8),
+        "expected_depth_jupiter": round(depth_jupiter, 6),
+        "alert_threshold_5x_jup": round(alert_threshold, 6),
+        "observed_depth": round(float(observed_depth), 8),
+        "depth_to_jupiter_ratio": round(depth_ratio, 3),
+        "alert": is_alert,
+        "override_reject": override_reject,
+        "classification_override": "Likely Stellar Spot / Instrument Glint" if is_alert else None,
+        "assessment": assessment,
+    }
 
 
 def _to_float_list(values: Optional[Iterable[float]]) -> List[float]:

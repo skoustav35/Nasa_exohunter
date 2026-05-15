@@ -3,6 +3,8 @@ import csv
 import re
 import os
 
+MAX_THESIS_EXPORT_CHARS = 3000
+
 # Load data
 discoveries_path = r'C:\Users\koush\.gemini\antigravity\brain\54239123-11ab-4c1b-9b08-16a8cdd03998\.system_generated\steps\540\output.txt'
 rejections_path = r'C:\Users\koush\.gemini\antigravity\brain\54239123-11ab-4c1b-9b08-16a8cdd03998\.system_generated\steps\541\output.txt'
@@ -20,6 +22,10 @@ def extract_param(text, patterns):
         if match:
             return match.group(1).strip()
     return "N/A"
+
+
+def thesis_export_text(text):
+    return (text or "").replace('\n', ' | ')[:MAX_THESIS_EXPORT_CHARS]
 
 # CSV headers
 headers = [
@@ -54,7 +60,7 @@ with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
             "Stellar_Teff_K": extract_param(thesis, [r'Effective Temperature.*?:\s*([\d\.]+)[\s]*K', r'T_eff.*?:\s*([\d\.]+)[\s]*K']),
             "Stellar_Magnitude_V": extract_param(thesis, [r'Stellar Magnitude.*?:\s*([\d\.-]+)']),
             "Classification": extract_param(thesis, [r'Classification:\s*(.*)', r'Reason:\s*(.*)', r'Decision:\s*(.*)']),
-            "Full_Thesis": thesis.replace('\n', ' | ')
+            "Full_Thesis": thesis_export_text(thesis)
         }
         writer.writerow(row)
 

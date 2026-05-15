@@ -41,6 +41,7 @@ function getGenAI(): InstanceType<typeof GoogleGenAI> {
 
 interface LightCurveResult {
   time: number[];
+  phase?: number[];
   flux: number[];
   hasTCE: boolean;
   tceCount: number;
@@ -82,10 +83,7 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     const tceResponse = await fetchWithTimeout(tceUrl);
 
     if (!tceResponse.ok) {
-      console.warn(
-        `[MAST] TCE request failed (${tceResponse.status}), using simulation fallback`
-      );
-      return generateFallbackLightCurve(ticId);
+      throw new Error(`[MAST] TCE request failed (${tceResponse.status})`);
     }
 
     const tceData = await tceResponse.json();
@@ -98,8 +96,7 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     }
 
     if (tceArray.length === 0) {
-      console.warn(`[MAST] No TCEs found for TIC ${ticId}, using simulation`);
-      return generateFallbackLightCurve(ticId);
+      throw new Error(`[MAST] No TCEs found for TIC ${ticId}`);
     }
 
     const tceCount = tceArray.length;
@@ -129,23 +126,29 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     const tableResponse = await fetchWithTimeout(tableUrl);
 
     if (!tableResponse.ok) {
-      console.warn(
-        `[MAST] Table request failed (${tableResponse.status}), using simulation fallback`
-      );
-      return generateFallbackLightCurve(ticId);
+      throw new Error(`[MAST] Table request failed (${tableResponse.status})`);
     }
 
     const tableData = await tableResponse.json();
 
-    // Extract PHASE and LC_DETREND columns
+    // Extract TIME, PHASE and LC_DETREND columns
+    let times: (number | undefined)[] = [];
     let phases: number[] = [];
     let fluxes: number[] = [];
-    let centroidX: number[] = [];
-    let centroidY: number[] = [];
+    let centroidX: (number | undefined)[] = [];
+    let centroidY: (number | undefined)[] = [];
 
+    let rows: any[] = [];
     if (tableData && Array.isArray(tableData)) {
-      for (const row of tableData) {
+      rows = tableData;
+    } else if (tableData && tableData.data && Array.isArray(tableData.data)) {
+      rows = tableData.data;
+    }
+
+    if (rows.length > 0) {
+      for (const row of rows) {
         const phase = row.PHASE ?? row.phase;
+        const timeVal = row.TIME ?? row.time;
         const flux = row.LC_DETREND ?? row.lc_detrend ?? row.LC_INIT ?? row.lc_init;
         const centX =
           row.MOM_CENTR1 ??
@@ -162,34 +165,49 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
         if (phase !== undefined && flux !== undefined && isFinite(phase) && isFinite(flux)) {
           phases.push(phase);
           fluxes.push(flux);
-          if (centX !== undefined && centY !== undefined && isFinite(centX) && isFinite(centY)) {
-            centroidX.push(Number(centX));
-            centroidY.push(Number(centY));
-          }
+          times.push(timeVal !== undefined && isFinite(timeVal) ? timeVal : undefined);
+          centroidX.push(centX !== undefined && isFinite(centX) ? Number(centX) : undefined);
+          centroidY.push(centY !== undefined && isFinite(centY) ? Number(centY) : undefined);
         }
       }
     }
 
     if (phases.length < 10) {
-      console.warn(
-        `[MAST] Insufficient data points (${phases.length}), using simulation fallback`
-      );
-      return generateFallbackLightCurve(ticId);
+      throw new Error(`[MAST] Insufficient data points (${phases.length})`);
     }
 
-    // Sort by phase
-    const combined = phases.map((p, i) => ({ phase: p, flux: fluxes[i] }));
-    combined.sort((a, b) => a.phase - b.phase);
+    // Sort by time chronologically (required for GP detrending and TTVs)
+    const combined = phases.map((p, i) => ({ 
+      phase: p, 
+      time: times[i], 
+      flux: fluxes[i],
+      cx: centroidX[i],
+      cy: centroidY[i]
+    }));
+    
+    combined.sort((a, b) => {
+      if (a.time === undefined && b.time === undefined) return 0;
+      if (a.time === undefined) return 1; // push missing times to end
+      if (b.time === undefined) return -1;
+      return a.time - b.time;
+    });
+    
     phases = combined.map((c) => c.phase);
+    times = combined.map((c) => c.time);
     fluxes = combined.map((c) => c.flux);
+    if (centroidX.length > 0) centroidX = combined.map((c) => c.cx as number);
+    if (centroidY.length > 0) centroidY = combined.map((c) => c.cy as number);
 
     // Compute transit depth from the real data
-    const baselineFlux = computeMedian(
-      fluxes.filter((_, i) => Math.abs(phases[i]) > 0.15)
+    const baselinePoints = fluxes.filter(
+      (_, i) => Math.abs(phases[i]) > 0.15
     );
-    const transitFlux = computeMedian(
-      fluxes.filter((_, i) => Math.abs(phases[i]) < 0.05)
+    const transitPoints = fluxes.filter(
+      (_, i) => Math.abs(phases[i]) < 0.05
     );
+    const baselineFlux = computeMedian(baselinePoints);
+    const transitFlux = computeMedian(transitPoints);
+    
     const transitDepth = baselineFlux > 0 ? (baselineFlux - transitFlux) / baselineFlux : null;
     // NOTE: This is a ROUGH preview assuming R_★ = 1.0 R☉ (109.2 R⊕).
     // The authoritative planet radius comes from the APIE pipeline which queries TIC for real R_★.
@@ -202,7 +220,8 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     );
 
     return {
-      time: phases,
+      time: times.length === phases.length ? times : phases,
+      phase: phases,
       flux: fluxes,
       hasTCE: true,
       tceCount,
@@ -216,9 +235,9 @@ async function fetchRealLightCurve(ticId: string): Promise<LightCurveResult> {
     };
   } catch (err: any) {
     if (err.name === "AbortError") {
-      console.warn(`[MAST] Request timed out for TIC ${ticId}`);
+      console.warn(`[MAST] Request timed out for TIC ${ticId}, using fallback.`);
     } else {
-      console.warn(`[MAST] Error fetching data for TIC ${ticId}:`, err.message);
+      console.warn(`[MAST] Error fetching data for TIC ${ticId}: ${err.message}, using fallback.`);
     }
     return generateFallbackLightCurve(ticId);
   }
@@ -262,6 +281,7 @@ function generateFallbackLightCurve(ticId: string): LightCurveResult {
 
   return {
     time,
+    phase: time,
     flux,
     hasTCE: isPlanetCandidate,
     tceCount: isPlanetCandidate ? 1 : 0,
@@ -373,7 +393,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Health / debug endpoint
   app.get("/api/env-test", (req, res) => {
@@ -384,35 +405,49 @@ async function startServer() {
     });
   });
 
-  // ── Random TIC ID from NASA Exoplanet Archive ──────────────
+  // ── Random TIC ID — Adaptive Priority-Fallback Logic ─────
   app.get("/api/random-tic", async (req, res) => {
-    // Robust local fallback array in case NASA API is down or rate-limiting
     const fallbackTics = ["159400561", "288348498", "261136679", "341420329", "182943944", "149603524", "291555748"];
-    
+
+    // ── Tier 1: Local catalog priority queue (high-confidence NASA TOIs) ──
     try {
-      // Use NASA Exoplanet Archive's fast JSON API
+      const catalogResult = await runPythonJson([
+        "-m", "exohunter.catalog_sync", "get-tic"
+      ]);
+
+      if (catalogResult && catalogResult.ticId) {
+        console.log(`[RANDOM-TIC] Tier ${catalogResult.tier}: TIC ${catalogResult.ticId} (${catalogResult.disposition || "N/A"})`);
+        return res.json({
+          ticId: catalogResult.ticId,
+          tier: catalogResult.tier,
+          disposition: catalogResult.disposition || null,
+          priority: catalogResult.priority || null,
+          source: "catalog_sync",
+        });
+      }
+      // Pool exhausted — fall through to Tier 2
+      console.log("[RANDOM-TIC] Catalog pool exhausted, falling back to NASA ExoFOP...");
+    } catch (catalogErr: any) {
+      console.warn("[RANDOM-TIC] Catalog sync unavailable:", catalogErr.message?.substring(0, 80));
+    }
+
+    // ── Tier 2: Live NASA ExoFOP API ─────────────────────────
+    try {
       const response = await fetchWithTimeout(
         "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/nstedAPI/nph-nstedAPI?table=toi&select=tid&format=json",
-        8000 // Reduced timeout to 8s so it fails fast to the fallback
+        8000
       );
-      
       if (!response.ok) throw new Error(`NASA API returned ${response.status}`);
-      
       const data = await response.json();
+      if (!Array.isArray(data) || data.length === 0) throw new Error("No candidates");
 
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error("No candidates found in NASA response");
-      }
-
-      // Deduplicate TIC IDs and pick a random one
       const uniqueTics = [...new Set(data.map((row: any) => String(row.tid)))];
       const randomTic = uniqueTics[Math.floor(Math.random() * uniqueTics.length)];
-      return res.json({ ticId: randomTic });
-      
+      return res.json({ ticId: randomTic, tier: 2, source: "exofop_live" });
     } catch (error: any) {
-      console.warn("⚠️ NASA Archive API unavailable or timed out, using robust local fallback:", error.message);
+      console.warn("⚠️ NASA ExoFOP unavailable, using local fallback:", error.message);
       const randomFallback = fallbackTics[Math.floor(Math.random() * fallbackTics.length)];
-      return res.json({ ticId: randomFallback });
+      return res.json({ ticId: randomFallback, tier: 3, source: "local_fallback" });
     }
   });
 
@@ -423,7 +458,7 @@ async function startServer() {
       const lightCurve = await fetchRealLightCurve(ticId);
       res.json({
         ticId,
-        lightCurve: { time: lightCurve.time, flux: lightCurve.flux },
+        lightCurve: { time: lightCurve.time, phase: lightCurve.phase, flux: lightCurve.flux },
         metadata: {
           source: lightCurve.source,
           hasTCE: lightCurve.hasTCE,
@@ -446,11 +481,12 @@ async function startServer() {
       const ticId = req.params.ticId;
       const lightCurve = await fetchRealLightCurve(ticId);
 
+      const phaseArray = lightCurve.phase || lightCurve.time;
       const baselinePoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) > 0.15
+        (_, i) => Math.abs(phaseArray[i]) > 0.15
       );
       const transitPoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) < 0.05
+        (_, i) => Math.abs(phaseArray[i]) < 0.05
       );
       const baselineMedian = computeMedian(baselinePoints);
       const transitMedian = computeMedian(transitPoints);
@@ -484,11 +520,12 @@ async function startServer() {
       const ticId = req.params.ticId;
       const lightCurve = await fetchRealLightCurve(ticId);
 
+      const phaseArray = lightCurve.phase || lightCurve.time;
       const baselinePoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) > 0.15
+        (_, i) => Math.abs(phaseArray[i]) > 0.15
       );
       const transitPoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) < 0.05
+        (_, i) => Math.abs(phaseArray[i]) < 0.05
       );
       const baselineMedian = computeMedian(baselinePoints);
       const transitMedian = computeMedian(transitPoints);
@@ -585,10 +622,21 @@ Tier 1 Agent cleared this candidate (Confidence: ${analysis.confidence}).
 Search "ExoFOP TESS TIC ${ticId}" and search astrophysics papers (ADS) for "TIC ${ticId}". 
 Look for "False Alarm" notes or confirmed planet publications between 2024-2026.
 
-3. STANDARDIZED EXPORT FORMAT:
-Generate a rigorous Discovery Thesis matching the official ExoFOP cTOI format.
-Include the 3 sections: False Positive Validation, Mathematical Validation, and High-Speed Cross-Referencing.
-If zero records of confirmation or rejection exist, explicitly apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
+3. STANDARDIZED EXPORT FORMAT (7-SECTION THESIS):
+Generate a rigorous Discovery Thesis following this exact structure:
+SECTION 1: Identity & Metadata (TIC ID, Researcher, Discovery Status).
+SECTION 2: Physical & Photometric Parameters (δ, SNR, Rp, P, Teq).
+SECTION 3: The "Anti-Mistake" Verification Metrics (Resonance, Harmonic Sweep, Confidence).
+SECTION 4: Host Star Context (R*, Teff, V).
+SECTION 5: AI Reasoning & Grounding (ExoFOP check, Classification, Final Verdict).
+SECTION 6: Synthetic Vision Assets (SVSE) (Confirm visual guidance generated and image slots: overview, profile, macro).
+SECTION 7: Sovereign Audit Trace. You MUST include these exactly:
+Applied_LDC_u1**: [value or N/A]
+Applied_LDC_u2**: [value or N/A]
+CROWDSAP_Factor**: [value or N/A]
+Calculated_Impact_b**: [value or N/A]
+
+If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
 
       const agent2Response = await ai.models.generateContent({
         model: "gemini-2.5-pro",
@@ -793,6 +841,38 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
       const result = JSON.parse(stdout.trim());
       res.json(result);
       
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── MCP API: NASA Archive Cross-Verification (v3.0) ─────────
+  app.post("/api/verify-archive", async (req, res) => {
+    try {
+      const { ticId, radius, period } = req.body;
+      if (!ticId) {
+        return res.status(400).json({ error: "ticId required" });
+      }
+
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const execAsync = promisify(exec);
+
+      let cmd = `python -X utf8 -m exohunter.async_bridge verify-archive ${ticId}`;
+      if (radius !== undefined && radius !== null) {
+        cmd += ` --radius ${radius}`;
+      }
+      if (period !== undefined && period !== null) {
+        cmd += ` --period ${period}`;
+      }
+
+      const { stdout, stderr } = await execAsync(cmd, { maxBuffer: 1024 * 1024 * 10 });
+      if (stderr && !stdout) {
+        console.error("Verify-archive stderr:", stderr);
+        return res.status(500).json({ error: "Archive verification failed" });
+      }
+      const result = JSON.parse(stdout.trim());
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1119,11 +1199,12 @@ If zero records of confirmation or rejection exist, explicitly apply the "[PRIMA
       // ── Step 2: Agent 1 — The False Positive Death Test (Gemini Flash) ──
       sendEvent("status", { state: "Scanning (Agent 1: Flash — False Positive Death Test)..." });
 
+      const phaseArray = lightCurve.phase || lightCurve.time;
       const baselinePoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) > 0.15
+        (_, i) => Math.abs(phaseArray[i]) > 0.15
       );
       const transitPoints = lightCurve.flux.filter(
-        (_, i) => Math.abs(lightCurve.time[i]) < 0.05
+        (_, i) => Math.abs(phaseArray[i]) < 0.05
       );
       const baselineMedian = computeMedian(baselinePoints);
       const transitMedian = computeMedian(transitPoints);
@@ -1148,14 +1229,14 @@ STATISTICAL SUMMARY:
 
 RAW SAMPLE — Transit region (phase ≈ 0):
 ${lightCurve.flux
-  .filter((_, i) => Math.abs(lightCurve.time[i]) < 0.06)
+  .filter((_, i) => Math.abs(phaseArray[i]) < 0.06)
   .slice(0, 15)
   .map((n) => n.toFixed(6))
   .join(", ")}
 
 RAW SAMPLE — Baseline region:
 ${lightCurve.flux
-  .filter((_, i) => Math.abs(lightCurve.time[i]) > 0.3)
+  .filter((_, i) => Math.abs(phaseArray[i]) > 0.3)
   .slice(0, 15)
   .map((n) => n.toFixed(6))
   .join(", ")}
@@ -1263,6 +1344,10 @@ Respond strictly in JSON: {"found": boolean, "confidence": float (0-1), "snr": f
 
       const stellarInfo = apieResult?.inferred_stellar || {};
       const orbitalInfo = apieResult?.inferred_orbital || {};
+      const modelingInfo = orbitalInfo?.likelihood_modeling || {};
+      const limbDarkeningInfo = apieResult?.limb_darkening || orbitalInfo?.limb_darkening || {};
+      const crowdingInfo = apieResult?.crowdsap_correction || orbitalInfo?.crowdsap_correction || {};
+      const durationRescanInfo = apieResult?.duration_rescan || {};
       const resonanceInfo = vfResult || {};
 
       const agent2Prompt = `You are a Senior Astrophysicist writing an Official cTOI Discovery Report for TIC ${ticId}.
@@ -1287,6 +1372,10 @@ PYTHON APIE INFERRED PHYSICS (use these exact values):
 - Inferred Stellar Density: ${stellarInfo.stellar_density_cgs || "N/A"} g/cm³
 - Inferred Apparent Magnitude: ${stellarInfo.apparent_magnitude_V || "N/A"}
 - Inferred Planet Radius: ${orbitalInfo.planet_radius_earth || "N/A"} R⊕ (${orbitalInfo.planet_radius_jupiter || "N/A"} R_J)
+- MCMC Radius: ${apieResult?.mcmc_radius_earth || orbitalInfo.mcmc_radius_earth || modelingInfo.mcmc_radius_earth || "N/A"} R⊕
+- MCMC Converged: ${orbitalInfo.mcmc_converged || modelingInfo.mcmc_converged ? "YES" : "NO/Unavailable"}
+- Impact Parameter (b): ${apieResult?.impact_parameter || orbitalInfo.impact_parameter || orbitalInfo.calculated_impact_b || modelingInfo.impact_parameter || "N/A"}
+- Inclination: ${apieResult?.inclination_deg || orbitalInfo.inclination_deg || modelingInfo.inclination_deg || "N/A"} deg
 - Semi-Major Axis: ${orbitalInfo.semi_major_axis_au || "N/A"} AU
 - Equilibrium Temperature: ${orbitalInfo.equilibrium_temperature_K || "N/A"} K
 - Classification: ${orbitalInfo.classification || "N/A"}
@@ -1295,6 +1384,10 @@ PYTHON APIE INFERRED PHYSICS (use these exact values):
 - In Habitable Zone: ${orbitalInfo.in_habitable_zone || "N/A"}
 - Physical Integrity Score: ${apieResult?.physical_integrity_score || "100"}/100
 - Sanity Flags: ${orbitalInfo.sanity_flags ? orbitalInfo.sanity_flags.join(", ") : "None"}
+- Stellar Lockdown Source: ${apieResult?.stellar_lockdown_source || "N/A"}
+- QLD Source: ${apieResult?.qld_source || limbDarkeningInfo.source || "N/A"} (u1=${limbDarkeningInfo.u1 || "N/A"}, u2=${limbDarkeningInfo.u2 || "N/A"})
+- CROWDSAP Correction: CROWDSAP=${crowdingInfo.crowdsap || "N/A"}, FLFRCSAP=${crowdingInfo.flfrcsap || "N/A"}, factor=${crowdingInfo.dilution_factor || "N/A"}
+- Duration Re-Scan: ${durationRescanInfo.accepted ? "ACCEPTED" : (durationRescanInfo.status || "not_needed")} ${durationRescanInfo.selected_duration_hours ? `(${durationRescanInfo.selected_duration_hours} h)` : ""}
 
 PYTHON RESONANCE MASKING RESULTS:
 - Resonance Alert: ${resonanceInfo.resonance_alert ? "⚠️ TRUE — TESS ARTIFACT LIKELY" : "✅ FALSE — Clear"}
@@ -1410,22 +1503,31 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
         const { setDoc, doc } = await import("firebase/firestore");
         const { db } = await import("./src/lib/firebase.js");
         
-        // Sync Report
+        // Sync Report content to Firestore
         const reportFile = `TIC_${ticId}_methodology.tex`;
         const reportPath = path.join(process.cwd(), "reports", reportFile);
         if (fs.existsSync(reportPath)) {
           const content = fs.readFileSync(reportPath, "utf8");
           await setDoc(doc(db, "reports", reportFile), {
-            ticId, filename: reportFile, content, createdAt: new Date().toISOString()
+            ticId, filename: reportFile, content, type: "methodology", createdAt: new Date().toISOString()
           });
         }
 
-        // Sync Plots (Metadata only if Storage is failing, but we keep the flow)
-        const plotFiles = fs.readdirSync(path.join(process.cwd(), "plots")).filter(f => f.startsWith(`TIC_${ticId}`));
-        for (const plotFile of plotFiles) {
-          await setDoc(doc(db, "plots", plotFile), {
-            ticId, filename: plotFile, status: "local_synced", createdAt: new Date().toISOString()
-          });
+        // Sync Plots as Base64 data URIs to Firestore
+        const plotsDir = path.join(process.cwd(), "plots");
+        if (fs.existsSync(plotsDir)) {
+          const plotFiles = fs.readdirSync(plotsDir).filter(f => f.startsWith(`TIC_${ticId}`) && f.endsWith('.png'));
+          for (const plotFile of plotFiles) {
+            try {
+              const fileBuffer = fs.readFileSync(path.join(plotsDir, plotFile));
+              const base64Data = fileBuffer.toString('base64');
+              const plotType = plotFile.includes('phase_folded') ? 'phase_folded' : plotFile.includes('ttv_oc') ? 'ttv_oc' : 'unknown';
+              await setDoc(doc(db, "plots", plotFile), {
+                ticId, filename: plotFile, type: plotType, base64: base64Data,
+                mimeType: 'image/png', sizeBytes: fileBuffer.length, createdAt: new Date().toISOString()
+              });
+            } catch (plotErr) { console.warn(`Plot sync failed for ${plotFile}:`, plotErr); }
+          }
         }
       } catch (e) { console.warn("Asset cloud sync warning:", e); }
 
@@ -1491,7 +1593,6 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
       const { getDocs, collection } = await import("firebase/firestore");
       const { db } = await import("./src/lib/firebase.js");
       const querySnapshot = await getDocs(collection(db, "plots"));
-      // We return the filenames to keep frontend compatibility
       const files = querySnapshot.docs.map(doc => doc.id);
       res.json({ files });
     } catch (error: any) {
@@ -1499,7 +1600,20 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
     }
   });
 
-  // Redirect /plots/:filename to the Firebase Storage URL stored in Firestore
+  // Full plot data with Base64 images grouped by TIC ID
+  app.get("/api/plots-data", async (req, res) => {
+    try {
+      const { getDocs, collection } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+      const querySnapshot = await getDocs(collection(db, "plots"));
+      const plots = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      res.json({ plots });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Serve plot image from Firestore Base64 data
   app.get("/plots/:filename", async (req, res) => {
     try {
       const { filename } = req.params;
@@ -1508,15 +1622,23 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
       const docRef = doc(db, "plots", filename);
       const docSnap = await getDoc(docRef);
 
-      if (docSnap.exists() && docSnap.data().url) {
-        return res.redirect(docSnap.data().url);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        // Serve Base64 data as a real image response
+        if (data.base64) {
+          const imgBuffer = Buffer.from(data.base64, 'base64');
+          res.set('Content-Type', data.mimeType || 'image/png');
+          res.set('Content-Length', String(imgBuffer.length));
+          res.set('Cache-Control', 'public, max-age=86400');
+          return res.send(imgBuffer);
+        }
+        // Legacy: redirect to Storage URL
+        if (data.url) return res.redirect(data.url);
       }
       
-      // Fallback to local if not in Firestore (for backward compatibility)
+      // Fallback to local file
       const localPath = path.join(process.cwd(), "plots", filename);
-      if (fs.existsSync(localPath)) {
-        return res.sendFile(localPath);
-      }
+      if (fs.existsSync(localPath)) return res.sendFile(localPath);
       
       res.status(404).send("Plot not found");
     } catch (error) {
@@ -1524,8 +1646,323 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
     }
   });
 
-  // Serve plots folder statically
-  app.use("/plots", express.static(path.join(process.cwd(), "plots")));
+  // ── SVSE Visual Guidance Engine ──────────────────────────────
+  // Primary: Python vision_spec.py module | Fallback: inline TypeScript
+  app.get("/api/visual-guidance/:ticId", async (req, res) => {
+    try {
+      const ticId = req.params.ticId;
+      const { getDocs, collection, query, where } = await import("firebase/firestore");
+      const { db } = await import("./src/lib/firebase.js");
+
+      // Find thesis for this TIC — try discovery first, then rejection
+      let q = query(collection(db, "queries"), where("ticId", "==", ticId), where("status", "==", "New Discovery!"));
+      let snap = await getDocs(q);
+      let thesisDoc = snap.docs[0]?.data();
+      let thesisType = "discovery";
+      if (!thesisDoc) {
+        q = query(collection(db, "queries"), where("ticId", "==", ticId), where("status", "==", "Rejected Thesis"));
+        snap = await getDocs(q);
+        thesisDoc = snap.docs[0]?.data();
+        thesisType = "rejection";
+      }
+      const thesisText = thesisDoc?.thesis || "";
+
+      // Extract physical parameters from thesis text via regex
+      const extractNum = (patterns: RegExp[]): number | null => {
+        for (const p of patterns) {
+          const m = thesisText.match(p);
+          if (m) return parseFloat(m[1]);
+        }
+        return null;
+      };
+
+      const Teq = extractNum([/Equilibrium.*?Temperature.*?([\d.]+)\s*K/i, /T_\{?eq\}?.*?([\d.]+)/]);
+      const Rp = extractNum([/Planet.*?Radius.*?([\d.]+)\s*R/i, /R_\{?p\}?.*?([\d.]+)/]);
+      const Teff = extractNum([/T_\{?eff\}?.*?([\d.]+)/i, /Effective.*?Temperature.*?([\d.]+)\s*K/i]);
+      const semiMajor = extractNum([/Semi.*?Major.*?Axis.*?([\d.]+)\s*AU/i]);
+      const period = extractNum([/Orbital.*?Period.*?([\d.]+)\s*[Dd]ay/i]);
+      const classification = thesisText.match(/Classification.*?:\s*(.+?)(?:\n|$)/i)?.[1]?.trim() || "Unknown";
+
+      // Extract sovereign integrity score
+      const integrityScore = extractNum([/Physical.*?Integrity.*?Score.*?([\d.]+)/i, /Integrity.*?Score.*?([\d.]+)/i]);
+
+      // ── Try Python SVSE Module First ──
+      try {
+        const { exec } = await import("child_process");
+        const { promisify } = await import("util");
+        const execAsync = promisify(exec);
+
+        const pyParams = JSON.stringify({ ticId, Teq, Rp, Teff, semiMajor, period, classification });
+        const { stdout } = await execAsync(
+          `python -X utf8 -m exohunter.vision_spec "${pyParams.replace(/"/g, '\\"')}"`,
+          { maxBuffer: 1024 * 1024 * 5, timeout: 10000 }
+        );
+
+        const guidance = JSON.parse(stdout.trim());
+        guidance.thesisType = thesisType;
+        guidance.sovereignIntegrityScore = integrityScore;
+        console.log(`[SVSE] Python engine OK for TIC ${ticId}`);
+        return res.json(guidance);
+      } catch (pyErr: any) {
+        console.warn(`[SVSE] Python fallback for TIC ${ticId}: ${pyErr.message?.substring(0, 100)}`);
+      }
+
+      // ── Inline TypeScript Fallback ──
+      let atmosphere = "Thin haze with minimal scattering";
+      let surfaceColor = "#8B7355";
+      let cloudBanding = "None";
+      let limbDarkening = "Subtle quadratic limb darkening";
+      let tidalLocking = false;
+      let hotspot = false;
+      let ringSystem = false;
+      let starColor = "#FFF4E0";
+      let starType = "G-type (Sun-like)";
+
+      if (Teq !== null) {
+        if (Teq < 200) {
+          atmosphere = "Cryogenic nitrogen-methane atmosphere with ice crystal hazes. Pale blue-white color from Rayleigh scattering at extreme cold.";
+          surfaceColor = "#C8D8E8";
+          cloudBanding = "Faint methane ice cirrus bands";
+        } else if (Teq < 350) {
+          atmosphere = "Nitrogen-oxygen atmosphere with water vapor clouds. Strong Rayleigh scattering producing blue sky gradients.";
+          surfaceColor = "#4A7C5E";
+          cloudBanding = "Cumulus-type water vapor clouds with clear-sky windows";
+        } else if (Teq < 800) {
+          atmosphere = "Thick CO2/water vapor greenhouse envelope. Venus-like sulfuric acid cloud decks.";
+          surfaceColor = "#D4A855";
+          cloudBanding = "Dense sulfuric acid cloud layers with vertical convection towers";
+        } else if (Teq < 1500) {
+          atmosphere = "High-temperature silicate cloud decks with iron condensates. Dark crimson to burnt orange.";
+          surfaceColor = "#C04020";
+          cloudBanding = "Banded silicate-iron clouds with equatorial jet streams";
+        } else if (Teq < 2500) {
+          atmosphere = "Ultra-hot hydrogen envelope with vaporized metals (TiO, VO). Day-side glows incandescent.";
+          surfaceColor = "#FF6030";
+          cloudBanding = "Continuous thermal emission gradient from day to night side";
+        } else {
+          atmosphere = "Extreme ultra-hot atmosphere with magma ocean surface visible through gaps.";
+          surfaceColor = "#FF4500";
+          cloudBanding = "Magma-glow emission through atmospheric gaps";
+        }
+      }
+
+      if (period !== null && semiMajor !== null && period < 10 && semiMajor < 0.1) {
+        tidalLocking = true;
+        hotspot = true;
+      }
+
+      if (Teff !== null) {
+        if (Teff < 3500) { starColor = "#FFB56C"; starType = "M-dwarf (Red dwarf)"; }
+        else if (Teff < 5000) { starColor = "#FFD2A1"; starType = "K-type (Orange dwarf)"; }
+        else if (Teff < 6000) { starColor = "#FFF4E0"; starType = "G-type (Sun-like)"; }
+        else if (Teff < 7500) { starColor = "#F8F7FF"; starType = "F-type (Yellow-white)"; }
+        else { starColor = "#CAD7FF"; starType = "A-type (White-blue)"; }
+      }
+
+      let sizeClass = "terrestrial";
+      if (Rp !== null) {
+        if (Rp > 6) sizeClass = "gas_giant";
+        else if (Rp > 2) sizeClass = "ice_giant";
+      }
+      if (sizeClass === "gas_giant" && Rp && Rp > 8) ringSystem = Math.random() > 0.7;
+
+      const guidance = {
+        ticId,
+        thesisType,
+        sovereignIntegrityScore: integrityScore,
+        parameters: { Teq, Rp, Teff, semiMajor, period, classification },
+        system_overview: {
+          title: "System Overview — Orbital Architecture",
+          prompt: `A scientifically accurate 2D top-down orbital diagram of the TIC ${ticId} system. The host star is a ${starType} rendered as a luminous sphere colored ${starColor} at center. The planet's orbit at ${semiMajor || 0.05} AU. The planet appears as a ${sizeClass} body colored ${surfaceColor}. Professional astronomical diagram. Dark space background.`,
+        },
+        planet_profile: {
+          title: "Planet Profile — Full Disk View",
+          prompt: `Photorealistic 2D full-disk of exoplanet TIC ${ticId}b. ${atmosphere} ${cloudBanding !== "None" ? `Cloud features: ${cloudBanding}.` : ""} ${limbDarkening}. Illumination from ${starType} host (${starColor}). ${tidalLocking ? "Tidally locked: permanent day/night hemispheres." : "Terminator shadow on one limb."} Radius ~${Rp || 2} R⊕. ${Teq || 300}K color palette. Physics-based rendering.`,
+        },
+        macro_surface: {
+          title: "Macro-Surface Close-up — Atmospheric Detail",
+          prompt: `Extreme close-up of upper atmosphere of TIC ${ticId}b at ${Teq || 300}K. ${Teq && Teq > 1500 ? "Thermal emission heat-map. Magma surface through gaps." : Teq && Teq < 350 ? "Water vapor clouds. Rayleigh scattering blue limb." : "Dense cloud deck with convection cells."} Physics-based. No fiction.`,
+        },
+        visual_metadata: {
+          atmosphere, surfaceColor, cloudBanding, limbDarkening, tidalLocking, hotspot, ringSystem, starColor, starType, sizeClass,
+        },
+      };
+
+      res.json(guidance);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── SVSE Vision Images API (Firestore CRUD) ──────────────────
+
+  // Upload a vision image for a TIC ID + slot
+  app.post("/api/vision-images", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { setDoc, doc, serverTimestamp } = await import("firebase/firestore");
+      const { ticId, imageSlot, imageData, prompt, title, thesisType, researcherName } = req.body;
+      if (!ticId || !imageSlot || !imageData) {
+        return res.status(400).json({ error: "ticId, imageSlot, and imageData are required" });
+      }
+      const validSlots = ["system_overview", "planet_profile", "macro_surface"];
+      if (!validSlots.includes(imageSlot)) {
+        return res.status(400).json({ error: `imageSlot must be one of: ${validSlots.join(", ")}` });
+      }
+      const docId = `${ticId}_${imageSlot}`;
+      await setDoc(doc(db, "vision_images", docId), {
+        ticId,
+        imageSlot,
+        imageData,
+        prompt: prompt || "",
+        title: title || imageSlot.replace(/_/g, " "),
+        thesisType: thesisType || "discovery",
+        researcherName: researcherName || "Unknown",
+        createdAt: serverTimestamp(),
+      });
+      res.json({ success: true, id: docId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all vision images for a TIC ID
+  app.get("/api/vision-images/:ticId", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { getDocs, collection, query, where } = await import("firebase/firestore");
+      const ticId = req.params.ticId;
+      const q = query(collection(db, "vision_images"), where("ticId", "==", ticId));
+      const snap = await getDocs(q);
+      const images = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      res.json({ ticId, images });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // List all TIC IDs with vision images
+  app.get("/api/vision-images", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { getDocs, collection } = await import("firebase/firestore");
+      const snap = await getDocs(collection(db, "vision_images"));
+      const ticMap: Record<string, { ticId: string; thesisType: string; imageCount: number; slots: string[] }> = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (!ticMap[data.ticId]) {
+          ticMap[data.ticId] = { ticId: data.ticId, thesisType: data.thesisType || "discovery", imageCount: 0, slots: [] };
+        }
+        ticMap[data.ticId].imageCount++;
+        ticMap[data.ticId].slots.push(data.imageSlot);
+      });
+      res.json({ gallery: Object.values(ticMap) });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update a specific vision image
+  app.put("/api/vision-images/:ticId/:slot", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { updateDoc, doc, serverTimestamp } = await import("firebase/firestore");
+      const { ticId, slot } = req.params;
+      const { imageData, prompt, title, researcherName } = req.body;
+      const docId = `${ticId}_${slot}`;
+      const updates: any = { updatedAt: serverTimestamp() };
+      if (imageData) updates.imageData = imageData;
+      if (prompt) updates.prompt = prompt;
+      if (title) updates.title = title;
+      if (researcherName) updates.researcherName = researcherName;
+      await updateDoc(doc(db, "vision_images", docId), updates);
+      res.json({ success: true, id: docId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete all vision images for a TIC ID
+  app.delete("/api/vision-images/:ticId", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { getDocs, collection, query, where, deleteDoc, doc } = await import("firebase/firestore");
+      const ticId = req.params.ticId;
+      const q = query(collection(db, "vision_images"), where("ticId", "==", ticId));
+      const snap = await getDocs(q);
+      if (snap.empty) return res.status(404).json({ error: "No vision images found for this TIC ID" });
+      const deletePromises = snap.docs.map(d => deleteDoc(doc(db, "vision_images", d.id)));
+      await Promise.all(deletePromises);
+      res.json({ success: true, deletedCount: snap.docs.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete a single vision image slot
+  app.delete("/api/vision-images/:ticId/:slot", async (req, res) => {
+    try {
+      const { db } = await import("./src/lib/firebase.js");
+      const { deleteDoc, doc } = await import("firebase/firestore");
+      const { ticId, slot } = req.params;
+      const docId = `${ticId}_${slot}`;
+      await deleteDoc(doc(db, "vision_images", docId));
+      res.json({ success: true, id: docId });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Catalog Sync APIs ────────────────────────────────────────
+  app.get("/api/catalog-status", async (req, res) => {
+    try {
+      const stats = await runPythonJson(["-m", "exohunter.catalog_sync", "status"]);
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/catalog-sync/trigger", async (req, res) => {
+    try {
+      console.log("[CATALOG-SYNC] Manual sync triggered...");
+      const result = await runPythonJson(["-m", "exohunter.catalog_sync", "sync"]);
+      console.log(`[CATALOG-SYNC] Complete: ${result.records_added} added, ${result.records_updated} updated`);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/catalog-sync/mark-analyzed", async (req, res) => {
+    try {
+      const { ticId, status } = req.body;
+      if (!ticId) return res.status(400).json({ error: "ticId required" });
+      const result = await runPythonJson([
+        "-m", "exohunter.catalog_sync", "mark-analyzed", String(ticId), status || "ANALYZED"
+      ]);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Cron: Daily Catalog Sync (03:00 UTC) ───────────────────
+  try {
+    const cron = await import("node-cron");
+    cron.default.schedule("0 3 * * *", async () => {
+      console.log("[CRON] Starting daily NASA catalog sync...");
+      try {
+        const result = await runPythonJson(["-m", "exohunter.catalog_sync", "sync"]);
+        console.log(`[CRON] Sync complete: ${result.records_added || 0} added, ${result.records_updated || 0} updated`);
+      } catch (err: any) {
+        console.error("[CRON] Sync failed:", err.message);
+      }
+    });
+    console.log("🕐 Catalog sync cron scheduled (daily at 03:00 UTC)");
+  } catch (cronErr) {
+    console.warn("⚠️ node-cron not available, skipping daily catalog sync scheduler");
+  }
 
   // ── Vite middleware (dev) or static serving (prod) ──────────
   if (process.env.NODE_ENV !== "production") {

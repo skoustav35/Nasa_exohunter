@@ -397,6 +397,53 @@ def apply_cbv_correction(
         }
 
 
+def apply_pld_correction(
+    time_data: Optional[Iterable[float]] = None,
+    flux_data: Optional[Iterable[float]] = None,
+    target_pixel_file=None,
+) -> dict:
+    """Optionally run Lightkurve Pixel-Level Decorrelation when a TPF is present."""
+    if lk is None:
+        return {
+            "status": "unavailable",
+            "time": _to_float_list(time_data),
+            "flux": _to_float_list(flux_data),
+            "method": "none",
+            "reason": "lightkurve is not installed, so PLD correction was skipped.",
+        }
+    if target_pixel_file is None:
+        return {
+            "status": "unavailable",
+            "time": _to_float_list(time_data),
+            "flux": _to_float_list(flux_data),
+            "method": "none",
+            "reason": "No TESS target pixel file was available for PLD correction.",
+        }
+    try:
+        from lightkurve.correctors import PLDCorrector
+
+        aperture = getattr(target_pixel_file, "pipeline_mask", None)
+        corrector = PLDCorrector(target_pixel_file, aperture_mask=aperture)
+        corrected = corrector.correct(pca_components=5, aperture_mask=aperture)
+        time_values = corrected.time.value.tolist() if hasattr(corrected.time, "value") else list(corrected.time)
+        flux_values = corrected.flux.value.tolist() if hasattr(corrected.flux, "value") else list(corrected.flux)
+        return {
+            "status": "success",
+            "time": time_values,
+            "flux": flux_values,
+            "method": "lightkurve-pld",
+            "reason": "Pixel-Level Decorrelation removed pixel-level pointing and scattered-light structure.",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "time": _to_float_list(time_data),
+            "flux": _to_float_list(flux_data),
+            "method": "none",
+            "reason": f"PLD correction failed: {exc}",
+        }
+
+
 def apply_gp_detrending(
     time_data: Optional[Iterable[float]],
     flux_data: Optional[Iterable[float]],
@@ -475,6 +522,7 @@ def preprocess_light_curve(
     period_days: Optional[float] = None,
     duration_hours: Optional[float] = None,
     lightcurve=None,
+    target_pixel_file=None,
     sector_series: Optional[List[dict]] = None,
 ) -> dict:
     """Run the ExoHunter pre-processing stack on a light curve.
@@ -485,7 +533,11 @@ def preprocess_light_curve(
     a robust fallback. The returned CDPP estimate quantifies the residual noise
     level on transit timescales for downstream FPP scoring.
     """
-    cbv_result = apply_cbv_correction(tic_id, time_data, flux_data, lightcurve=lightcurve)
+    pld_result = apply_pld_correction(time_data, flux_data, target_pixel_file=target_pixel_file)
+    pld_time = pld_result.get("time")
+    pld_flux = pld_result.get("flux")
+
+    cbv_result = apply_cbv_correction(tic_id, pld_time, pld_flux, lightcurve=lightcurve)
     cbv_time = cbv_result.get("time")
     cbv_flux = cbv_result.get("flux")
 
@@ -542,6 +594,11 @@ def preprocess_light_curve(
             "status": cbv_result.get("status"),
             "method": cbv_result.get("method"),
             "reason": cbv_result.get("reason"),
+        },
+        "pld": {
+            "status": pld_result.get("status"),
+            "method": pld_result.get("method"),
+            "reason": pld_result.get("reason"),
         },
         "gp": {
             "status": gp_result.get("status"),

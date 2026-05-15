@@ -13,7 +13,7 @@ const MCP_CONFIG = `{
       "command": "node",
       "args": ["./mcp-server/dist/index.js"],
       "env": {
-        "EXOHUNTER_API_URL": "http://localhost:3000"
+        "EXOHUNTER_API_URL": "<YOUR_NGROK_URL>"
       }
     }
   }
@@ -73,20 +73,20 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 md:p-12">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/80 backdrop-blur-xl"
+            className="absolute inset-0 bg-black/75 backdrop-blur-lg"
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 0 }}
+            initial={{ opacity: 0, scale: 0.92, y: 24 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 0 }}
-            transition={{ type: "spring", damping: 30, stiffness: 400 }}
-            className="relative w-full max-w-3xl max-h-[90vh] bg-slate-900/98 backdrop-blur-3xl border border-slate-700/50 rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden"
+            exit={{ opacity: 0, scale: 0.92, y: 24 }}
+            transition={{ type: "spring", damping: 28, stiffness: 320 }}
+            className="relative w-full max-w-3xl max-h-[85vh] bg-slate-900/95 backdrop-blur-2xl border border-slate-700/80 rounded-[2rem] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
           >
             {/* Gradient top bar */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
@@ -181,13 +181,34 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
 
                   {/* New Prerequisites / Antigravity Guide */}
                   <div className="mt-5 space-y-4">
+                    
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
+                      className="bg-sky-500/10 border border-sky-500/30 rounded-2xl p-5"
+                    >
+                      <h4 className="flex items-center gap-2 text-sm font-bold text-sky-300 uppercase tracking-widest mb-4">
+                        <Terminal className="w-4 h-4" /> 1. Cloud Tunnel (Ngrok)
+                      </h4>
+                      <p className="text-slate-300 text-sm leading-relaxed mb-3 font-medium">
+                        To expose your local Scientific Engine to the public, run this command in your terminal:
+                      </p>
+                      <div className="bg-slate-950/50 border border-slate-800 p-3 rounded-xl font-mono text-sm text-sky-400 mb-4 select-all cursor-pointer hover:bg-slate-950 transition-colors">
+                        npx ngrok http 3000
+                      </div>
+                      <p className="text-slate-400 text-xs font-medium">
+                        Replace <code className="text-sky-300 bg-sky-950/50 px-1 rounded">&lt;YOUR_NGROK_URL&gt;</code> in the config above with the public URL Ngrok gives you (e.g., https://abc.ngrok-free.app).
+                      </p>
+                    </motion.div>
+
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 0.1 }}
                       className="bg-indigo-500/10 border border-indigo-500/30 rounded-2xl p-5"
                     >
                       <h4 className="flex items-center gap-2 text-sm font-bold text-indigo-300 uppercase tracking-widest mb-4">
-                        <Sparkles className="w-4 h-4" /> Preferred IDE: Google Antigravity
+                        <Sparkles className="w-4 h-4" /> 2. Preferred IDE: Google Antigravity
                       </h4>
                       <div className="space-y-4 text-sm text-slate-300 font-medium">
                         <div className="flex items-start gap-3">
