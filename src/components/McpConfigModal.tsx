@@ -10,10 +10,16 @@ interface McpConfigModalProps {
 const MCP_CONFIG = `{
   "mcpServers": {
     "sarkar-exohunter": {
-      "command": "node",
-      "args": ["./mcp-server/dist/index.js"],
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "tsx",
+        "c:/Users/koush/Downloads/Nasa_exohunter-main/Nasa_exohunter-main/mcp-server/index.ts"
+      ],
       "env": {
-        "EXOHUNTER_API_URL": "<YOUR_RENDER_URL>"
+        "EXOHUNTER_API_URL": "https://sarkar-exohunter-engine-koe0.onrender.com"
       }
     }
   }
@@ -188,17 +194,17 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
                       className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5"
                     >
                       <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-300 uppercase tracking-widest mb-4">
-                        <Terminal className="w-4 h-4" /> 1. Cloud Engine (Render)
+                        <Terminal className="w-4 h-4" /> 1. Verified Cloud Bridge
                       </h4>
                       <p className="text-slate-300 text-sm leading-relaxed mb-3 font-medium">
-                        Your Scientific Engine is now hosted 24/7 in the cloud. Get your permanent URL from your Render dashboard:
+                        Your Scientific Engine is live on Render. Use the robust <code className="text-emerald-400">npx tsx</code> config above for the best experience on Windows.
                       </p>
                       <div className="bg-slate-950/50 border border-slate-800 p-3 rounded-xl font-mono text-sm text-emerald-400 mb-4 select-all cursor-pointer hover:bg-slate-950 transition-colors flex items-center justify-between">
-                        <span>https://your-service.onrender.com</span>
+                        <span>https://sarkar-exohunter-engine-koe0.onrender.com</span>
                         <ExternalLink className="w-3.5 h-3.5 opacity-50" />
                       </div>
                       <p className="text-slate-400 text-xs font-medium">
-                        Replace <code className="text-emerald-300 bg-emerald-950/50 px-1 rounded">&lt;YOUR_RENDER_URL&gt;</code> in the config above with your live Render URL. No local tunneling is required.
+                        The config above is pre-linked to your live engine. Simply copy and paste it into your IDE's <code className="text-emerald-300 bg-emerald-950/50 px-1 rounded">mcp_config.json</code>.
                       </p>
                     </motion.div>
 
