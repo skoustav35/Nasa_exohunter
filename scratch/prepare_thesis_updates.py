@@ -35,11 +35,11 @@ UPDATES = {
         "stellar_radius": "0.76 R_sun (Gaia DR3 Hard-Lock)",
         "audit_note": "Sub-Signal Sweep recovered the sub-Earth signature. Previous 66% depth spike masked as instrumental artifact."
     },
-    "425934411": {
-        "name": "TOI-141 b",
-        "radius": "7.0 R_oplus (Super-Neptune)",
-        "stellar_radius": "1.05 R_sun (Gaia DR3 Hard-Lock)",
-        "audit_note": "Ultra-short period orbit confirmed. Stellar radius inflation resolved."
+    "403224672": {
+        "name": "TOI-141 b / HD 213885 b",
+        "radius": "1.745 R_oplus (Super-Earth)",
+        "stellar_radius": "1.1011 R_sun (Gaia DR3/NASA Archive Hard-Lock)",
+        "audit_note": "TOI-141 control corrected to HD 213885 b / TIC 403224672. TIC 425934411 is not this benchmark target."
     },
     "14193736": {
         "name": "WASP-1 b",

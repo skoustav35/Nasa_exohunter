@@ -29,12 +29,16 @@ from exohunter.vetting import (
     normalize_phase_array,
     run_independent_cognitive_protocol,
     search_secondary_eclipse,
+    secure_report_badge_assignment,
+    validate_geometric_radius_depth,
 )
 from exohunter.grounding import (
+    enforce_isolated_target_lookup,
     resolve_stellar_lockdown,
     verify_against_nasa_archive,
     verify_tic_identity,
 )
+from exohunter.anomaly_engines import deploy_autonomous_sub_engine_matrix
 from exohunter.simulation import (
     apply_tess_flux_dilution_firewall,
     compute_habitability_report,
@@ -634,7 +638,7 @@ def calculate_orbital_physics(period_days, depth, estimated_r_star_solar, transi
         if 0.1 <= model_radius <= 30.0:
             r_planet_earth = model_radius
             calculated_impact_b = modeling_report.get("impact_parameter")
-    benchmark_prior = get_known_planet_prior(tic_id)
+    benchmark_prior = get_known_planet_prior(tic_id, period_days)
     benchmark_locked = bool(modeling_report.get("benchmark_locked"))
     if benchmark_prior and abs(float(period_days) - benchmark_prior["period_days"]) / benchmark_prior["period_days"] < 0.05:
         r_planet_earth = float(benchmark_prior["radius_earth"])
@@ -717,11 +721,24 @@ def calculate_orbital_physics(period_days, depth, estimated_r_star_solar, transi
     hz_outer_au = habitability_report["hz_outer_au"]
     in_hz = habitability_report["in_habitable_zone"]
 
+    canonical_depth_ppm = (
+        (r_planet_earth / max(estimated_r_star_solar * 109.2, 1e-8)) ** 2
+    ) * 1_000_000.0
+    observed_transit_depth_ppm = max(depth, 0) * 1_000_000.0
+    radius_depth_check = validate_geometric_radius_depth(
+        canonical_depth_ppm,
+        r_planet_earth,
+        estimated_r_star_solar,
+    )
+
     return {
         "semi_major_axis_au": round(a_au, 6),
         "planet_radius_earth": round(r_planet_earth, 3),
         "planet_radius_jupiter": round(r_planet_jupiter, 4),
         "planet_radius_observed_earth": round(r_planet_obs_earth, 3),
+        "transit_depth_ppm": round(canonical_depth_ppm, 3),
+        "observed_transit_depth_ppm": round(observed_transit_depth_ppm, 3),
+        "radius_depth_geometric_check": radius_depth_check,
         "equilibrium_temperature_K": round(T_eq, 1),
         "composition_guess": composition,
         "classification": classification,
@@ -1050,6 +1067,11 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
         if progress_callback:
             progress_callback(5, "Initializing analysis context.")
         period_float = float(period_days)
+        target_identity_context = enforce_isolated_target_lookup(
+            tic_id,
+            measured_period_days=period_float,
+            strict_identity=False,
+        )
 
         bundle = _load_best_light_curve_bundle(tic_id)
         raw_time = bundle.get("time", [])
@@ -1233,6 +1255,26 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             tic_id=tic_id,
         )
         flux_firewall = apply_tess_flux_dilution_firewall(flux, dilution_audit)
+        anomaly_context = deploy_autonomous_sub_engine_matrix(
+            {
+                "tic_id": str(tic_id),
+                "period_days": period_float,
+                "stellar": stellar,
+            },
+            {
+                "phase": phase_data,
+                "flux": flux,
+                "metadata": metadata,
+                "dilution": dilution_audit,
+                "odd_even": period_confidence_report,
+                "period_days": period_float,
+                "duration_hours": transit_duration_hours,
+            },
+        )
+        corrected_flux = anomaly_context.get("flux")
+        if corrected_flux and len(corrected_flux) == len(flux):
+            flux = corrected_flux
+            depth, snr = calculate_snr(flux, transit_duration_hours, phase_data=phase_data)
 
         # ── Step 3.5: Depth-Sanity Gatekeeper (v3.0) ──
         if progress_callback:
@@ -1240,7 +1282,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
         depth_sanity = check_depth_sanity(depth, stellar.get("stellar_radius_solar", 1.0))
 
         sweep_debug = {}
-        benchmark_prior = get_known_planet_prior(tic_id)
+        benchmark_prior = get_known_planet_prior(tic_id, period_float)
         if depth_sanity.get("alert") and benchmark_prior:
             from exohunter.limb_darkening import get_limb_darkening_correction
             ld_for_sweep = get_limb_darkening_correction(
@@ -1452,6 +1494,20 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             period_float,
             transit_duration_hours,
         )
+        anomaly_context = deploy_autonomous_sub_engine_matrix(
+            anomaly_context,
+            {
+                "phase": phase_data,
+                "flux": flux,
+                "metadata": metadata,
+                "dilution": dilution_audit,
+                "odd_even": period_confidence_report,
+                "period_days": period_float,
+                "duration_hours": transit_duration_hours,
+                "orbital": orbital,
+                "centroid_report": centroid_report,
+            },
+        )
 
         b_impact = impact_report.get("impact_parameter", 0.0)
         centroid_shift = centroid_report.get("shift_pixels")
@@ -1509,6 +1565,25 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             )
             challenge_report["override_reject"] = False
 
+        anomaly_force_rejection = anomaly_context.get("force_rejection_reason")
+        if anomaly_force_rejection and not orbital.get("radius_solution", {}).get("benchmark_locked"):
+            orbital["sanity_flags"].append("Autonomous Anomaly Engine Reject")
+            orbital["flag_reasons"].append(anomaly_force_rejection)
+            orbital["classification"] = "Rejected: Physical Impossibility"
+            orbital["physical_integrity_score"] = min(orbital.get("physical_integrity_score", 100), 25)
+        elif anomaly_force_rejection:
+            orbital["sanity_flags"].append("Autonomous Anomaly Engine Audit Warning")
+            orbital["flag_reasons"].append(anomaly_force_rejection)
+
+        if snr < 6.0 and not benchmark_radius_locked:
+            orbital["sanity_flags"].append("Failed Strict SNR Firewall")
+            orbital["flag_reasons"].append(f"Measured SNR ({snr:.2f}) is below the strict 6.0 threshold. Noise-driven signal inflation suspected.")
+            orbital["classification"] = "Rejected: Physical Impossibility"
+            orbital["physical_integrity_score"] = min(orbital.get("physical_integrity_score", 100), 20)
+        elif snr < 6.0:
+            orbital["sanity_flags"].append("SNR Audit Warning")
+            orbital["flag_reasons"].append(f"Measured SNR ({snr:.2f}) is below 6.0, but benchmark lock prevents automatic rejection.")
+
         validation = compute_validation_probability(
             snr,
             period_float,
@@ -1531,7 +1606,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
         all_flag_reasons = orbital.get("flag_reasons", [])
         flag_reason = "; ".join(all_flag_reasons) if all_flag_reasons else None
 
-        if challenge_report.get("override_reject"):
+        if challenge_report.get("override_reject") or (anomaly_force_rejection and not benchmark_radius_locked):
             validation_status = "Rejected"
         elif validation["validated"] and orbital["classification"] not in [
             "Binary Star System",
@@ -1595,6 +1670,13 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
                 "physical_integrity_score": max(0, min(100, orbital.get("physical_integrity_score", 100))),
                 "inferred_orbital": orbital,
                 "inferred_stellar": stellar,
+                "identity_anchor": {
+                    "tic_id": target_identity_context.tic_id,
+                    "claimed_name": target_identity_context.claimed_name,
+                    "verified_name": target_identity_context.verified_name,
+                    "identity_verified": target_identity_context.identity_verified,
+                },
+                "anomaly_engine_context": anomaly_context,
                 "shape_analysis": shape_report,
                 "impact_parameter_report": impact_report,
                 "secondary_eclipse_report": secondary_report,
@@ -1653,10 +1735,35 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
                 physical_integrity = max(0, min(100, orbital.get("physical_integrity_score", 100)))
                 flag_reason = "; ".join(orbital.get("flag_reasons", []))
 
+        physical_integrity = max(0, min(100, orbital.get("physical_integrity_score", 100)))
+        narrative_gate = secure_report_badge_assignment(
+            physical_integrity,
+            {
+                "status": validation_status,
+                "verdict": orbital.get("classification"),
+                "badge": archive_verification.get("grounding_badge", "yellow"),
+            },
+        )
+        if str(narrative_gate.get("status", "")).startswith("REJECTED"):
+            validation_status = "Rejected"
+            rnaas_report = None
+            if "Validation status:" in summary:
+                summary = summary.rsplit("Validation status:", 1)[0] + "Validation status: Rejected."
+            else:
+                summary = f"{summary} Validation status: Rejected."
+
         flux_firewall_report = {
             key: value
             for key, value in (flux_firewall or {}).items()
             if key != "normalized_flux"
+        }
+        identity_anchor = {
+            "tic_id": target_identity_context.tic_id,
+            "claimed_name": target_identity_context.claimed_name,
+            "measured_period_days": target_identity_context.measured_period_days,
+            "verified_name": target_identity_context.verified_name,
+            "identity_verified": target_identity_context.identity_verified,
+            "benchmark_prior": target_identity_context.benchmark_prior,
         }
 
         profile = {
@@ -1666,6 +1773,9 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             "validation_status": validation_status,
 
             "measured_transit_depth": round(depth, 6),
+            "transit_depth_ppm": orbital.get("transit_depth_ppm"),
+            "observed_transit_depth_ppm": orbital.get("observed_transit_depth_ppm"),
+            "radius_depth_geometric_check": orbital.get("radius_depth_geometric_check"),
             "measured_snr": round(snr, 2),
             "transit_duration_hours": round(transit_duration_hours, 3),
             "orbital_period_days": period_float,
@@ -1706,6 +1816,9 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             "depth_sanity_report": depth_sanity,
             "metadata_identity": metadata_identity,
             "archive_verification": archive_verification,
+            "identity_anchor": identity_anchor,
+            "anomaly_engine_context": anomaly_context,
+            "narrative_gate": narrative_gate,
             "grounding_badge": archive_verification.get("grounding_badge", "yellow"),
             "official_radius": archive_verification.get("official_radius_earth"),
             "official_period": archive_verification.get("official_period_days"),

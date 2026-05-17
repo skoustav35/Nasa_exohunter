@@ -11,6 +11,7 @@ R_SUN = 6.957e8
 R_EARTH = 6.371e6
 R_JUPITER_EARTH = 11.2  # Jupiter radius in Earth radii
 AU = 1.496e11
+R_SUN_EARTH = 109.2
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -101,6 +102,83 @@ def check_depth_sanity(
         "classification_override": "Likely Stellar Spot / Instrument Glint" if is_alert else None,
         "assessment": assessment,
     }
+
+
+def validate_geometric_radius_depth(
+    transit_depth_ppm: Optional[float],
+    planet_radius_earth: Optional[float],
+    stellar_radius_sol: Optional[float],
+    tolerance: float = 0.02,
+) -> dict:
+    """Validate Rp = Rstar * 109.2 * sqrt(depth_fraction).
+
+    The depth passed here must be canonical: de-diluted and limb-darkening
+    neutral. Raw observed depths should be carried separately.
+    """
+    try:
+        depth_ppm = float(transit_depth_ppm)
+        radius_earth = float(planet_radius_earth)
+        stellar_radius = float(stellar_radius_sol)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "reason": "Missing or non-numeric radius/depth fields.",
+            "expected_radius_earth": None,
+            "drift": None,
+        }
+
+    if not all(math.isfinite(value) for value in [depth_ppm, radius_earth, stellar_radius]):
+        return {
+            "ok": False,
+            "reason": "Radius/depth fields must be finite.",
+            "expected_radius_earth": None,
+            "drift": None,
+        }
+    if depth_ppm <= 0 or depth_ppm > 1_000_000:
+        return {
+            "ok": False,
+            "reason": f"Non-physical transit depth ({depth_ppm} ppm).",
+            "expected_radius_earth": None,
+            "drift": None,
+        }
+    if radius_earth <= 0 or stellar_radius <= 0:
+        return {
+            "ok": False,
+            "reason": "Planet and stellar radii must be positive.",
+            "expected_radius_earth": None,
+            "drift": None,
+        }
+
+    expected_radius = stellar_radius * R_SUN_EARTH * math.sqrt(depth_ppm / 1_000_000.0)
+    drift = abs(radius_earth - expected_radius) / max(expected_radius, 1e-12)
+    return {
+        "ok": drift <= tolerance,
+        "reason": None if drift <= tolerance else "Planet radius deviates from geometric transit depth.",
+        "expected_radius_earth": round(expected_radius, 6),
+        "drift": round(drift, 6),
+        "tolerance": tolerance,
+    }
+
+
+def secure_report_badge_assignment(physical_integrity_score, report_payload):
+    """Force narrative status to agree with physical-integrity scoring."""
+    payload = dict(report_payload or {})
+    try:
+        score = float(physical_integrity_score)
+    except (TypeError, ValueError):
+        score = 0.0
+
+    if score < 50:
+        payload["status"] = "REJECTED: PHYSICAL IMPOSSIBILITY"
+        payload["verdict"] = "FALSE POSITIVE MARGIN TRACTION EXHAUSTED"
+        payload["badge"] = "[REJECTED BLENDED SIGNAL ARTIFACT]"
+        payload["narrative_locked"] = True
+    else:
+        payload.setdefault("status", "CONFIRMED HIGH-FIDELITY DISCOVERY")
+        payload.setdefault("badge", "[PRIMARY COMPONENT - VERIFIED V5.0]")
+        payload["narrative_locked"] = True
+
+    return payload
 
 
 def _to_float_list(values: Optional[Iterable[float]]) -> List[float]:
@@ -425,7 +503,7 @@ def estimate_impact_parameter(
     denominator = max(1e-8, 1.0 - alpha * alpha)
     numerator = ((1.0 + k) ** 2) - ((alpha * a_over_r) ** 2)
     b_sq = max(0.0, numerator / denominator)
-    b_sq = min(b_sq, max(a_over_r * a_over_r, 0.0))
+    b_sq = min(b_sq, (1.0 + k) ** 2)
     impact_parameter = math.sqrt(b_sq)
 
     cos_i = max(0.0, min(1.0, impact_parameter / max(a_over_r, 1e-8)))

@@ -10,16 +10,10 @@ interface McpConfigModalProps {
 const MCP_CONFIG = `{
   "mcpServers": {
     "sarkar-exohunter": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "tsx",
-        "c:/Users/koush/Downloads/Nasa_exohunter-main/Nasa_exohunter-main/mcp-server/index.ts"
-      ],
+      "command": "node",
+      "args": ["./mcp-server/dist/index.js"],
       "env": {
-        "EXOHUNTER_API_URL": "https://sarkar-exohunter-engine-koe0.onrender.com"
+        "EXOHUNTER_API_URL": "http://localhost:3000"
       }
     }
   }
@@ -187,35 +181,13 @@ export function McpConfigModal({ isOpen, onClose }: McpConfigModalProps) {
 
                   {/* New Prerequisites / Antigravity Guide */}
                   <div className="mt-5 space-y-4">
-                    
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-5"
-                    >
-                      <h4 className="flex items-center gap-2 text-sm font-bold text-emerald-300 uppercase tracking-widest mb-4">
-                        <Terminal className="w-4 h-4" /> 1. Verified Cloud Bridge
-                      </h4>
-                      <p className="text-slate-300 text-sm leading-relaxed mb-3 font-medium">
-                        Your Scientific Engine is live on Render. Use the robust <code className="text-emerald-400">npx tsx</code> config above for the best experience on Windows.
-                      </p>
-                      <div className="bg-slate-950/50 border border-slate-800 p-3 rounded-xl font-mono text-sm text-emerald-400 mb-4 select-all cursor-pointer hover:bg-slate-950 transition-colors flex items-center justify-between">
-                        <span>https://sarkar-exohunter-engine-koe0.onrender.com</span>
-                        <ExternalLink className="w-3.5 h-3.5 opacity-50" />
-                      </div>
-                      <p className="text-slate-400 text-xs font-medium">
-                        The config above is pre-linked to your live engine. Simply copy and paste it into your IDE's <code className="text-emerald-300 bg-emerald-950/50 px-1 rounded">mcp_config.json</code>.
-                      </p>
-                    </motion.div>
-
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 0.1 }}
                       className="bg-indigo-500/10 border border-indigo-500/30 rounded-2xl p-5"
                     >
                       <h4 className="flex items-center gap-2 text-sm font-bold text-indigo-300 uppercase tracking-widest mb-4">
-                        <Sparkles className="w-4 h-4" /> 2. Preferred IDE: Google Antigravity
+                        <Sparkles className="w-4 h-4" /> Preferred IDE: Google Antigravity
                       </h4>
                       <div className="space-y-4 text-sm text-slate-300 font-medium">
                         <div className="flex items-start gap-3">

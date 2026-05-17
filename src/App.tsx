@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Sparkles, ChevronLeft, Play, AlertTriangle, Satellite, Trophy, FileText, Image as ImageIcon, Eye } from 'lucide-react';
 import { doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './lib/firebase';
+import { executeSovereignSanityCheck, shouldRunSovereignSanityCheck } from './lib/sovereignSanity';
 import { useFirebase } from './components/FirebaseProvider';
 
 type Section = 'hub' | 'observatory' | 'stream' | 'lab' | 'rejection' | 'leaderboard' | 'reports' | 'plots' | 'vision';
@@ -28,6 +29,30 @@ interface TransitMetadata {
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 15);
+const exohunterBridgeUrl = (import.meta as any).env?.VITE_SUPABASE_EDGE_URL || '';
+
+async function writeToEdge(eventName: string, payload: any) {
+  if (!shouldRunSovereignSanityCheck(payload)) {
+    return { ok: true, skipped: true };
+  }
+  if (!executeSovereignSanityCheck(payload)) {
+    throw new Error('Sovereign sanity firewall rejected the physical payload.');
+  }
+  if (!exohunterBridgeUrl) {
+    return { ok: true, skipped: true };
+  }
+
+  const response = await fetch(exohunterBridgeUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: eventName, payload }),
+  });
+  if (!response.ok) {
+    const diagnostic = await response.text();
+    throw new Error(`Supabase bridge rejected payload (${response.status}): ${diagnostic}`);
+  }
+  return response.json();
+}
 
 function Dashboard() {
   const { user, researcherName } = useFirebase();
@@ -42,19 +67,6 @@ function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [fluxData, setFluxData] = useState<{ time: number[], flux: number[] } | null>(null);
   const [transitMetadata, setTransitMetadata] = useState<TransitMetadata | null>(null);
-
-  const writeToEdge = async (action: 'setDoc' | 'updateDoc', queryId: string, payload: any) => {
-    try {
-      const res = await fetch('https://jcryzckbiigukijpaqog.supabase.co/functions/v1/exohunter-bridge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, queryId, payload })
-      });
-      if (!res.ok) console.error("Edge function failed:", await res.text());
-    } catch (e) {
-      console.error("Edge write failed:", e);
-    }
-  };
 
   const stopHunt = () => {
     setIsHunting(false);
@@ -79,25 +91,26 @@ function Dashboard() {
       setFluxData(null);
       setTransitMetadata(null);
       
-      let currentQueryId = '';
+      let queryRef;
       try {
-        const randomRes = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/random-tic`);
+        const randomRes = await fetch('/api/random-tic');
         if (!randomRes.ok) throw new Error("Failed to fetch target from NASA database.");
         const { ticId } = await randomRes.json();
         
         setActiveTicId(ticId);
 
-        currentQueryId = generateId();
-        await writeToEdge('setDoc', currentQueryId, {
+        const queryId = generateId();
+        queryRef = doc(db, 'queries', queryId);
+        await setDoc(queryRef, {
           ticId: ticId,
           status: 'Connecting to MAST Archive...',
           userId: user.uid,
           researcherName,
-          createdAt: { isServerTimestamp: true }
+          createdAt: serverTimestamp()
         });
 
         abortControllerRef.current = new AbortController();
-        const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/discover?ticId=${encodeURIComponent(ticId)}`, {
+        const response = await fetch(`/api/discover?ticId=${encodeURIComponent(ticId)}`, {
           signal: abortControllerRef.current.signal
         });
         if (!response.ok || !response.body) throw new Error("Failed to start pipeline");
@@ -127,24 +140,27 @@ function Dashboard() {
             if (data) {
               const parsed = JSON.parse(data);
               if (event === 'status') {
-                await writeToEdge('updateDoc', currentQueryId, { status: parsed.state });
+                await updateDoc(queryRef, { status: parsed.state });
               } else if (event === 'lightcurve') {
                 setFluxData(parsed);
-                await writeToEdge('updateDoc', currentQueryId, { status: 'Scanning (Agent 1: Flash)...' });
+                await updateDoc(queryRef, { status: 'Scanning (Agent 1: Flash)...' });
               } else if (event === 'metadata') {
                 setTransitMetadata(parsed);
               } else if (event === 'agent1') {
                 // Agent 1 results received — could display if needed
               } else if (event === 'complete') {
+                if (shouldRunSovereignSanityCheck(parsed.sovereignPayload)) {
+                  await writeToEdge('completion', parsed.sovereignPayload);
+                }
                 if (parsed.success) {
-                  await writeToEdge('updateDoc', currentQueryId, { status: 'New Discovery!', thesis: parsed.thesis });
+                  await updateDoc(queryRef, { status: 'New Discovery!', thesis: parsed.thesis });
                 } else {
-                  await writeToEdge('updateDoc', currentQueryId, { status: parsed.reason || 'Rejected' });
+                  await updateDoc(queryRef, { status: parsed.reason || 'Rejected' });
                 }
                 setLoading(false);
               } else if (event === 'error') {
                  setError(parsed.message);
-                 await writeToEdge('updateDoc', currentQueryId, { status: 'Error: ' + parsed.message });
+                 await updateDoc(queryRef, { status: 'Error: ' + parsed.message });
                  setLoading(false);
                  setIsHunting(false);
                  isHuntingRef.current = false;
@@ -167,8 +183,8 @@ function Dashboard() {
         setLoading(false);
         setIsHunting(false);
         isHuntingRef.current = false;
-        if (currentQueryId) {
-          await writeToEdge('updateDoc', currentQueryId, { status: 'Failed: ' + err.message }).catch(() => {});
+        if (queryRef) {
+          await updateDoc(queryRef, { status: 'Failed: ' + err.message }).catch(() => {});
         }
         break;
       }
