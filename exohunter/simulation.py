@@ -641,8 +641,15 @@ def fit_limb_darkened_transit(
     dilution: dict,
     initial_depth: Optional[float] = None,
     tic_id: Optional[str] = None,
+    **kwargs,
 ) -> dict:
     """Fit a batman light curve using a likelihood/least-squares objective."""
+    # Active the idle SNR firewall using the passed keyword arguments
+    current_snr = float(kwargs.get("snr", 10.0))
+    system_matrix = KNOWN_MULTI_PLANET_SYSTEMS.get(str(tic_id), [])
+    if system_matrix and tic_id:
+        evaluate_signal_and_decouple_matrix(system_matrix, period_days, current_snr)
+
     phase_values = _normalize_phases(_to_float_list(phases))
     flux_values = _to_float_list(flux)
     if len(phase_values) != len(flux_values) or len(flux_values) < 30:

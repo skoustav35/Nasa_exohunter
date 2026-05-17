@@ -445,7 +445,8 @@ def resolve_stellar_lockdown(
         "92226327": {"rad": 0.2159, "mass": 0.1844, "teff": 3096.0, "logg": 5.00, "crowdsap": 0.98, "name": "LHS 1140"},
         "231615731": {"rad": 1.35, "mass": 1.30, "teff": 6400.0, "logg": 4.30, "crowdsap": 0.98, "name": "WASP-174b"},
         "382200953": {"rad": 0.85, "mass": 0.86, "teff": 5320.0, "logg": 4.55, "crowdsap": 0.98, "name": "TOI-125 b"},
-        "261136679": {"rad": 0.76, "mass": 0.73, "teff": 4571.0, "logg": 4.60, "crowdsap": 0.98, "name": "HD 21749 c"},
+        "279741379": {"rad": 0.76, "mass": 0.73, "teff": 4571.0, "logg": 4.60, "crowdsap": 0.98, "name": "HD 21749 c"},
+        "261136679": {"rad": 1.10, "mass": 1.11, "teff": 6037.0, "logg": 4.42, "crowdsap": 0.99, "name": "Pi Mensae c"},
         "14193736":  {"rad": 1.45, "mass": 1.24, "teff": 6200.0, "logg": 4.25, "crowdsap": 0.98, "name": "WASP-1 b"},
         "229536616": {"rad": 0.93, "mass": 0.96, "teff": 5620.0, "logg": 4.49, "crowdsap": 0.88, "name": "WASP-46b"},
         "318491006": {"rad": 0.81, "mass": 0.97, "teff": 4800.0, "logg": 4.55, "crowdsap": 0.98, "name": "WASP-29b"},
@@ -790,9 +791,9 @@ def verify_against_nasa_archive(
                 return _archive_result_from_prior(result, tic_id, prior, measured_radius_earth, measured_period_days)
             return result
 
-        # Select by orbital period, never by row order, to prevent multi-planet cross-talk.
+        # Enforce period-matching on all rows, including single-row returns, to protect against cache leakage
         planet = data[0]
-        if measured_period_days and len(data) > 1:
+        if measured_period_days and len(data) >= 1:
             measured_period = float(measured_period_days)
             ranked = []
             for row in data:
@@ -803,7 +804,7 @@ def verify_against_nasa_archive(
                 best_delta, best_row = min(ranked, key=lambda item: item[0])
                 if best_delta / measured_period > 0.05:
                     raise ValueError(
-                        "[CROSS-TALK CRITICAL] NASA archive rows do not contain a period "
+                        f"[CROSS-TALK CRITICAL] NASA archive records do not contain a matching period "
                         f"within 5% of measured period {measured_period:.6f} d for TIC {tic_id}."
                     )
                 planet = best_row
