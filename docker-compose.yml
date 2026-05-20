@@ -11,14 +11,15 @@ services:
       EXOHUNTER_CELERY_BROKER_URL: redis://redis:6379/0
       EXOHUNTER_CELERY_RESULT_BACKEND: redis://redis:6379/1
 
-  worker:
+  celery_worker:
     build: .
-    command: ["python3", "-m", "celery", "-A", "exohunter.tasks:celery_app", "worker", "--loglevel=INFO"]
+    command: celery -A exohunter.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - .:/app
     depends_on:
       - redis
-    environment:
-      EXOHUNTER_CELERY_BROKER_URL: redis://redis:6379/0
-      EXOHUNTER_CELERY_RESULT_BACKEND: redis://redis:6379/1
+    env_file:
+      - .env
 
   redis:
     image: redis:7-alpine

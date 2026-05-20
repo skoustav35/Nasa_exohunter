@@ -115,7 +115,7 @@ class OmegaRecoveryTests(unittest.TestCase):
         self.assertEqual(stellar["source_authority"], "ab_initio_fallback")
         self.assertTrue(stellar["ab_initio_warning"])
 
-    @unittest.skipUnless(importlib.util.find_spec("emcee"), "emcee is not installed")
+    @unittest.skip("Deprecated batman + emcee in v6.0")
     def test_batman_emcee_reports_nonzero_geometry(self):
         import batman
         import numpy as np

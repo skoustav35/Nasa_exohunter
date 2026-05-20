@@ -2,9 +2,14 @@ numpy>=2.1
 matplotlib>=3.9
 astropy>=6.1
 lightkurve>=2.5
+wotan>=1.10
+juliet>=2.2.0
 celerite2>=0.3
+dynesty>=2.1.0
 celery[redis]>=5.4
 redis>=5.0
 scipy>=1.14
-batman-package>=2.4.9
-emcee>=3.1
+requests>=2.31.0
+pytest==8.0.0
+pytest-mock==3.12.0
+pytest-cov==4.1.0

@@ -707,23 +707,7 @@ def calculate_orbital_physics(period_days, depth, estimated_r_star_solar, transi
     M_star = (stellar_mass_solar if stellar_mass_solar else estimated_r_star_solar ** 1.25) * M_SUN
     T_eff = stellar_teff_override if stellar_teff_override else T_SUN * ((estimated_r_star_solar ** 1.25) ** 0.57)
 
-    # All likelihood fitting is now handled by run_god_tier_pipeline()
-    # It ingests the cleaned time_data (phase) and flux_data
-    # -------------------------------------------------------------
-    modeling_report = run_god_tier_pipeline(
-        time_data,
-        flux_data,
-        period_days,
-        transit_duration_hours,
-        estimated_r_star_solar,
-        stellar_mass_solar,
-        ld_report,
-        crowdsap_report,
-        initial_depth=depth,
-        tic_id=tic_id,
-        snr=snr,
-        stellar_source=inferred_stellar.get("source_authority", "gaia_dr3")
-    )
+
     # Semi-major axis via Kepler's 3rd Law
     a_cubed = (G * M_star * P_sec**2) / (4.0 * math.pi**2)
     a = a_cubed ** (1.0/3.0)
@@ -747,7 +731,7 @@ def calculate_orbital_physics(period_days, depth, estimated_r_star_solar, transi
     
     calculated_impact_b = None
     r_planet_earth = r_planet_earth_naive
-    modeling_report = fit_limb_darkened_transit(
+    modeling_report = run_god_tier_pipeline(
         time_data,
         flux_data,
         period_days,

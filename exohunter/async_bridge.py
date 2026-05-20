@@ -10,8 +10,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency guard
     AsyncResult = None
 
-from exohunter.tasks import celery_app
-
+from exohunter.celery_app import app as celery_app
 
 def enqueue_profile_task(tic_id: str, period_days: float, transit_duration_hours: float | None = None) -> dict:
     """Submit a full ExoHunter physical-profile job to Celery."""
@@ -19,8 +18,8 @@ def enqueue_profile_task(tic_id: str, period_days: float, transit_duration_hours
         raise RuntimeError("Celery is not available. Install the Python worker dependencies first.")
 
     task = celery_app.send_task(
-        "exohunter.run_profile_scan",
-        args=[tic_id, period_days, transit_duration_hours],
+        "exohunter.tasks.async_analyze_physical_profile",
+        args=[tic_id, period_days, 0.0, transit_duration_hours, {}],
     )
     return {
         "job_id": task.id,
