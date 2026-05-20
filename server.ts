@@ -1067,7 +1067,7 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
       const ticId = payload.tic_id;
       const status = payload.status || "completed";
       
-      console.log([God-Tier Pipeline] Received async result for TIC );
+      console.log(`[God-Tier Pipeline] Received async result for TIC ${ticId}`);
       
       // We will push the result to Firebase using existing methods in server.ts
       // For instance, pushing a thesis automatically if Confirmed.
