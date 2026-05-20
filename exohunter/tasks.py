@@ -63,6 +63,15 @@ if celery_app is not None:
                 progress_callback=progress_update,
             )
             progress_update(100, "Validation profile completed.")
+            
+            # Push payload to Firebase via the internal webhook in server.ts
+            try:
+                import requests
+                # Assuming the Express server runs on port 3000 locally
+                requests.post("http://127.0.0.1:3000/api/internal/push-results", json=result, timeout=10)
+            except Exception as e:
+                print("Failed to push result to webhook:", e)
+
             return result
         except Exception as exc:
             self.update_state(

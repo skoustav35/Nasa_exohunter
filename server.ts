@@ -1057,6 +1057,35 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
     }
   };
 
+  app.post("/api/internal/push-results", async (req, res) => {
+    try {
+      const payload = req.body;
+      if (!payload || !payload.tic_id) {
+        return res.status(400).json({ error: "Missing payload or tic_id" });
+      }
+      
+      const ticId = payload.tic_id;
+      const status = payload.status || "completed";
+      
+      console.log([God-Tier Pipeline] Received async result for TIC );
+      
+      // We will push the result to Firebase using existing methods in server.ts
+      // For instance, pushing a thesis automatically if Confirmed.
+      const thesisRef = db.collection("discovery_theses").doc(String(ticId));
+      await thesisRef.set({
+        ticId: String(ticId),
+        payload: payload,
+        researcherName: "God-Tier Async Pipeline",
+        createdAt: new Date().toISOString()
+      });
+      
+      return res.status(200).json({ message: "Pushed to Firebase successfully" });
+    } catch (e: any) {
+      console.error("Webhook Error:", e);
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/analyze", enqueueAnalysisHandler);
   app.post("/api/analyze", enqueueAnalysisHandler);
   app.get("/status/:jobId", readStatusHandler);

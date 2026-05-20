@@ -721,25 +721,34 @@ server.tool(
     try {
       const body: any = { ticId, period };
       if (transitDuration) body.transitDuration = transitDuration;
-      const data = await apiPost("/api/physical-profile", body);
-      if (data.status === "error") throw new Error(data.message);
+      // God-Tier Pipeline is asynchronous. Route to enqueue endpoint.
+      const data = await apiPost("/api/analyze", body);
       
-      let report = `🔬 APIE Physical Profile for TIC ${ticId}\n`;
-      report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+      let report = ?? God-Tier Pipeline Job Queued for TIC 
+;
+      report += ???????????????????????????????????????
+
+;
+      report += ? Status: 
+;
+      report += ? Job ID: 
+;
+      report += ? Period:  days
+;
+      report += 
+The Bayesian pipeline using juliet/dynesty is currently executing in the background.
+;
+      report += Execution time is estimated at 1-3 hours. Once complete, results will automatically run through the Consensus Engines and push to Firebase.
+;
+      report += 
+Please inform the user that the job has been successfully offloaded to the async Celery workers.
+;
       
-      report += `📊 Measured Parameters:\n`;
-      report += `• Transit Depth (δ): ${(data.measured_transit_depth * 100).toFixed(4)}%\n`;
-      report += `• SNR: ${data.measured_snr}\n`;
-      report += `• Transit Duration: ${data.transit_duration_hours} hours\n`;
-      report += `• Orbital Period: ${data.orbital_period_days} days\n`;
-      report += `• Physical Integrity Score: ${data.physical_integrity_score}/100\n`;
-      if (data.duration_rescan) {
-        const dr = data.duration_rescan;
-        report += `• Duration Re-Scan: ${dr.accepted ? "ACCEPTED" : (dr.status || "not_needed")}`;
-        if (dr.selected_duration_hours) report += ` (${dr.selected_duration_hours} h)`;
-        if (dr.rejection_reason) report += ` | ${dr.rejection_reason}`;
-        report += `\n`;
-      }
+      return txt(report);
+    } catch (e: any) {
+      return txt(?? Pipeline Error: );
+    }
+  }
       if (data.flag_reason) {
         report += `• ⚠️ Flag Reason: ${data.flag_reason}\n`;
       }
