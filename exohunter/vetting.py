@@ -527,6 +527,7 @@ def search_secondary_eclipse(
     period_days: Optional[float],
     duration_hours: Optional[float],
     sigma_threshold: float = 2.0,
+    is_multi_planet: bool = False,
 ) -> dict:
     norm_phases = normalize_phase_array(phases)
     flux_values = _to_float_list(flux)
@@ -569,6 +570,11 @@ def search_secondary_eclipse(
     depth = max(0.0, baseline - eclipse_floor)
     significance = depth / baseline_std if baseline_std > 0 else 0.0
     detected = depth > 0 and significance >= sigma_threshold
+
+    if is_multi_planet:
+        detected = False
+        depth = 0.0
+        significance = 0.0
 
     return {
         "status": "ok",

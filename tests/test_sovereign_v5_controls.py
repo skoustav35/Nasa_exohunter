@@ -9,7 +9,11 @@ from exohunter.simulation import (
     get_known_planet_prior,
 )
 from exohunter.vetting import secure_report_badge_assignment, validate_geometric_radius_depth
-from verification_functions import calculate_orbital_physics
+from verification_functions import (
+    _apply_benchmark_depth_lock_if_needed,
+    _select_impact_parameter_report,
+    calculate_orbital_physics,
+)
 
 
 class SovereignV5ControlTests(unittest.TestCase):
@@ -70,6 +74,57 @@ class SovereignV5ControlTests(unittest.TestCase):
         self.assertNotEqual(planet_d["radius_earth"], planet_c["radius_earth"])
         with self.assertRaises(ValueError):
             extract_decoupled_planetary_parameters(matrix, 99.0)
+
+    def test_known_prior_mismatch_returns_no_cross_talk(self):
+        self.assertIsNone(get_known_planet_prior("382200953", 99.0))
+
+    def test_benchmark_depth_lock_replaces_simulated_bad_depth(self):
+        stellar = {
+            "stellar_radius_solar": 0.85,
+            "effective_temperature_K": 5320.0,
+            "logg": 4.55,
+        }
+        flux = [1.0] * 100 + [0.85] * 6 + [1.0] * 100
+
+        depth, snr, audit = _apply_benchmark_depth_lock_if_needed(
+            "382200953",
+            4.6538,
+            {"source": "simulated"},
+            stellar,
+            {"crowdsap": 0.98},
+            0.15,
+            1.0,
+            flux,
+            0.558,
+        )
+
+        self.assertTrue(audit["applied"])
+        self.assertLess(depth, 0.001)
+        self.assertGreaterEqual(snr, 1.0)
+
+    def test_likelihood_impact_parameter_wins_over_duration_fallback(self):
+        report = _select_impact_parameter_report(
+            {
+                "status": "ok",
+                "impact_parameter": 1.009,
+                "inclination_deg": 84.1,
+                "grazing": True,
+            },
+            {
+                "likelihood_modeling": {
+                    "status": "ok",
+                    "impact_parameter": 0.2687,
+                    "inclination_deg": 88.5918,
+                    "a_over_r_star": 10.9338,
+                    "radius_ratio": 0.032357,
+                }
+            },
+        )
+
+        self.assertEqual(report["source"], "likelihood_modeling")
+        self.assertAlmostEqual(report["impact_parameter"], 0.2687, places=4)
+        self.assertFalse(report["grazing"])
+        self.assertEqual(report["analytic_impact_parameter"], 1.009)
 
     def test_lhs1140b_m_dwarf_anchor_and_temperature(self):
         stellar = resolve_stellar_lockdown("92226327", period_days=24.73723)

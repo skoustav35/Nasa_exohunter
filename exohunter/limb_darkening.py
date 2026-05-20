@@ -216,21 +216,40 @@ def get_limb_darkening_correction(
             stellar = resolve_stellar_lockdown(tic_id)
             gaia_teff = stellar.get("effective_temperature_K")
             gaia_logg = stellar.get("logg")
+            gaia_feh = stellar.get("feh")
             if gaia_teff and gaia_logg and gaia_teff > 0 and gaia_logg > 0:
                 teff = gaia_teff
                 logg = gaia_logg
+                if metallicity is None:
+                    metallicity = gaia_feh
                 use_default = False
                 gaia_source = True
         except Exception:
             pass  # Fall through to solar default
+
+    if metallicity is None and tic_id:
+        try:
+            from exohunter.grounding import resolve_stellar_lockdown
+            stellar = resolve_stellar_lockdown(tic_id)
+            metallicity = stellar.get("feh")
+        except Exception:
+            pass
 
     if use_default:
         u1, u2 = _SOLAR_U1, _SOLAR_U2
         source = "solar_default_claret_2017_tess"
         teff_used = 5778.0
         logg_used = 4.44
+        feh_used = float(metallicity) if metallicity is not None else 0.0
     else:
         u1, u2 = _bilinear_interpolate(float(teff), float(logg))
+        feh_used = float(metallicity) if metallicity is not None else 0.0
+        # 3D linear perturbation correction based on Claret (2017) sensitivities
+        u1 = u1 + 0.04 * feh_used
+        u2 = u2 - 0.02 * feh_used
+        u1 = max(0.0, min(1.0, u1))
+        u2 = max(0.0, min(1.0, u2))
+        
         source = "gaia_dr3_auto_claret_2017_tess" if gaia_source else "claret_2017_tess_interpolated"
         teff_used = float(teff)
         logg_used = float(logg)
@@ -241,17 +260,18 @@ def get_limb_darkening_correction(
     correction_factor = 1.0 / math.sqrt(ld_denominator)
 
     return {
-        "u1": u1,
-        "u2": u2,
+        "u1": round(u1, 4),
+        "u2": round(u2, 4),
         "ld_denominator": round(ld_denominator, 6),
         "correction_factor": round(correction_factor, 6),
         "source": source,
-        "source_reference": "Claret 2017 A&A 600 A30 TESS quadratic coefficients",
-        "metallicity_used": float(metallicity) if metallicity is not None else 0.0,
+        "source_reference": "Claret 2017 A&A 600 A30 TESS quadratic coefficients with [Fe/H] trilinear perturbation",
+        "metallicity_used": round(feh_used, 3),
         "metallicity_assumption": "solar fallback" if metallicity is None else "catalog value",
         "teff_used": teff_used,
         "logg_used": logg_used,
     }
+
 
 
 # ═══════════════════════════════════════════════════════════════

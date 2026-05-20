@@ -28,6 +28,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import statistics
 
 from exohunter.simulation import KNOWN_MULTI_PLANET_SYSTEMS, get_known_planet_prior
 
@@ -39,8 +40,20 @@ R_SUN = 6.957e8
 T_SUN = 5778
 CATALOG_CACHE_PATH = Path(os.getenv("EXOHUNTER_CATALOG_CACHE", Path(__file__).with_name("catalog_cache.json")))
 CACHE_TTL_SECONDS = 30 * 24 * 3600
+import ssl
+
+def _urlopen(url_or_req, data=None, timeout=12):
+    try:
+        ctx = ssl._create_unverified_context()
+    except AttributeError:
+        ctx = None
+    if ctx is not None:
+        return _urlopen(url_or_req, data=data, timeout=timeout, context=ctx)
+    return _urlopen(url_or_req, data=data, timeout=timeout)
+
 
 active_catalog_pointer = None
+
 cached_stellar_radius = None
 cached_stellar_teff = None
 active_target_context = None
@@ -264,11 +277,13 @@ def fetch_gaia_stellar_params(tic_id: str) -> dict:
             # Estimate mass from radius if FLAME mass not available
             if mass is None or mass <= 0:
                 mass = rad ** 1.25  # main-sequence scaling
-
+            
+            feh = _safe_float(row.get("mh_gspphot"))
             result = {
                 "rad": round(rad, 4),
                 "mass": round(mass, 4),
                 "Teff": round(teff, 0) if teff else None,
+                "feh": round(feh, 3) if feh is not None else None,
                 "source": "gaia_dr3",
                 "gaia_source_id": gaia_id,
                 "cache_status": "miss_saved",
@@ -282,7 +297,109 @@ def fetch_gaia_stellar_params(tic_id: str) -> dict:
         return _unavailable(f"Gaia query error: {str(e)[:120]}")
 
 
+def fetch_dynamic_gaia_crowdsap(tic_id: str, ap_radius_arcsec: float = 40.0) -> dict:
+    """
+    Query Gaia DR3 within 60" of the target TIC's coordinates to compute
+    a dynamic companion aperture dilution factor (CROWDSAP).
+    """
+    cached = _cache_get("dynamic_gaia_crowdsap", tic_id)
+    if cached:
+        cached["cache_status"] = "hit"
+        return cached
+
+    try:
+        # Step 1: Query cross-match for coordinates & GAIA ID
+        adql_xmatch = (
+            f"SELECT TOP 1 \"GAIA\", \"RAJ2000\", \"DEJ2000\" "
+            f"FROM \"IV/39/tic82\" "
+            f"WHERE \"TIC\"={int(tic_id)}"
+        )
+        xmatch = _query_vizier_tap(adql_xmatch)
+        if not xmatch:
+            return _unavailable("No Kepler/K2 cross-match in TIC")
+        
+        row_xm = xmatch[0]
+        gaia_id = str(row_xm.get("GAIA") or "").strip()
+        ra = _safe_float(row_xm.get("RAJ2000"))
+        dec = _safe_float(row_xm.get("DEJ2000"))
+
+        if not ra or not dec:
+            return _unavailable("No target coordinates resolved")
+
+        # Step 2: Query Gaia DR3 for nearby companions within 60 arcseconds
+        radius_deg = 60.0 / 3600.0
+        adql_spatial = (
+            f"SELECT \"Source\", \"RA_ICRS\", \"DE_ICRS\", \"Gmag\", "
+            f"DISTANCE(POINT('ICRS', \"RA_ICRS\", \"DE_ICRS\"), POINT('ICRS', {ra}, {dec})) * 3600 AS dist_arcsec "
+            f"FROM \"I/355/gaiadr3\" "
+            f"WHERE CONTAINS(POINT('ICRS', \"RA_ICRS\", \"DE_ICRS\"), CIRCLE('ICRS', {ra}, {dec}, {radius_deg})) = 1"
+        )
+        spatial_res = _query_vizier_tap(adql_spatial)
+        if not spatial_res:
+            return _unavailable("No spatial stars resolved in Gaia DR3")
+
+        # Find target star
+        target_star = None
+        min_dist = 999.0
+        for r in spatial_res:
+            # Match by GAIA ID if possible
+            sid = str(r.get("Source") or "").strip()
+            if gaia_id and sid == gaia_id:
+                target_star = r
+                break
+            # Fallback to closest star
+            d = _safe_float(r.get("dist_arcsec"))
+            if d is not None and d < min_dist:
+                min_dist = d
+                target_star = r
+
+        if not target_star or target_star.get("Gmag") is None:
+            return _unavailable("Could not resolve target star photometry in Gaia DR3")
+
+        target_gmag = _safe_float(target_star.get("Gmag"))
+        F_target = 10.0 ** (-0.4 * target_gmag)
+        F_comp_total = 0.0
+        companions_count = 0
+        max_contamination_frac = 0.0
+
+        for r in spatial_res:
+            sid = str(r.get("Source") or "").strip()
+            if sid == str(target_star.get("Source")).strip():
+                continue
+            
+            comp_gmag = _safe_float(r.get("Gmag"))
+            dist = _safe_float(r.get("dist_arcsec"))
+            if comp_gmag is None or dist is None:
+                continue
+
+            # Flat-topped aperture response model
+            weight = 1.0 / (1.0 + (dist / ap_radius_arcsec) ** 4)
+            F_comp = (10.0 ** (-0.4 * comp_gmag)) * weight
+            F_comp_total += F_comp
+            companions_count += 1
+            
+            frac = F_comp / F_target
+            if frac > max_contamination_frac:
+                max_contamination_frac = frac
+
+        dynamic_crowdsap = F_target / (F_target + F_comp_total)
+
+        result = {
+            "dynamic_crowdsap": round(dynamic_crowdsap, 6),
+            "companions_count": companions_count,
+            "max_contamination_frac": round(max_contamination_frac, 6),
+            "source": "dynamic_gaia_dr3",
+            "cache_status": "miss_saved"
+        }
+        _cache_set("dynamic_gaia_crowdsap", tic_id, result)
+        return result
+
+    except Exception as e:
+        return _unavailable(f"Dynamic CROWDSAP error: {str(e)[:120]}")
+
+
 def _query_vizier_tap(adql: str, timeout: int = 12) -> list:
+
     """Execute an ADQL query against the VizieR TAP endpoint."""
     params = urllib.parse.urlencode({
         "request": "doQuery",
@@ -294,7 +411,7 @@ def _query_vizier_tap(adql: str, timeout: int = 12) -> list:
     req = urllib.request.Request(url, headers={
         "User-Agent": "SarkarExoHunter/3.0 (grounding)"
     })
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _urlopen(req, timeout=timeout) as resp:
         raw = json.loads(resp.read().decode("utf-8"))
 
     # VizieR TAP returns VOTable-style JSON with 'data' and 'metadata'
@@ -332,7 +449,7 @@ def fetch_tic_v8_params(tic_id: str) -> dict:
             req = urllib.request.Request(tic_url, headers={
                 "User-Agent": "SarkarExoHunter/3.0 (grounding)"
             })
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with _urlopen(req, timeout=15) as resp:
                 info = json.loads(resp.read().decode())
                 if isinstance(info, dict):
                     rad = _safe_float(info.get("rad") or info.get("stellar_radius"))
@@ -375,7 +492,7 @@ def fetch_tic_v8_params(tic_id: str) -> dict:
             headers={"Content-Type": "application/x-www-form-urlencoded",
                       "User-Agent": "SarkarExoHunter/3.0 (grounding)"}
         )
-        with urllib.request.urlopen(mast_req, timeout=15) as resp:
+        with _urlopen(mast_req, timeout=15) as resp:
             result = json.loads(resp.read().decode())
             if isinstance(result, dict) and "data" in result and len(result["data"]) > 0:
                 row = result["data"][0]
@@ -406,6 +523,201 @@ def fetch_tic_v8_params(tic_id: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 2.5. HIGH-ACCURACY STELLAR API ENGINES (Caltech TAP & VizieR KIC/EPIC)
+# ═══════════════════════════════════════════════════════════════
+
+def fetch_nasa_archive_stellar_params(tic_id: str) -> dict:
+    """
+    Query NASA Exoplanet Archive composite parameters via Caltech TAP service
+    to fetch peer-reviewed high-accuracy stellar parameters for confirmed hosts.
+    """
+    cached = _cache_get("nasa_archive", tic_id)
+    if cached:
+        cached["cache_status"] = "hit"
+        return cached
+
+    try:
+        adql = (
+            f"SELECT DISTINCT hostname, st_rad, st_mass, st_teff, st_logg, st_lum, st_dens "
+            f"FROM pscomppars "
+            f"WHERE tic_id='TIC {tic_id}' OR tic_id='{tic_id}'"
+        )
+        params = urllib.parse.urlencode({
+            "query": adql,
+            "format": "json",
+        })
+        url = f"https://exoplanetarchive.ipac.caltech.edu/TAP/sync?{params}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "SarkarExoHunter/3.0 (stellar_grounding)"
+        })
+        with _urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list) and data:
+                row = data[0]
+                rad = _safe_float(row.get("st_rad"))
+                mass = _safe_float(row.get("st_mass"))
+                teff = _safe_float(row.get("st_teff"))
+                logg = _safe_float(row.get("st_logg"))
+                
+                if rad is not None and 0.01 < rad < 100:
+                    if mass is None or mass <= 0:
+                        mass = rad ** 1.25
+                    
+                    result = {
+                        "rad": round(rad, 4),
+                        "mass": round(mass, 4),
+                        "Teff": round(teff, 0) if teff else None,
+                        "logg": round(logg, 3) if logg else None,
+                        "hostname": row.get("hostname"),
+                        "source": "nasa_archive",
+                        "cache_status": "miss_saved",
+                    }
+                    _cache_set("nasa_archive", tic_id, result)
+                    return result
+        return _unavailable("No NASA archive composite parameters found")
+    except Exception as e:
+        return _unavailable(f"NASA Archive query error: {str(e)[:120]}")
+
+
+def fetch_nasa_stellarhosts_params(tic_id: str, hostname: str) -> dict:
+    """
+    Query NASA Exoplanet Archive stellarhosts table by hostname.
+    """
+    if not hostname:
+        return _unavailable("No hostname specified")
+        
+    cached = _cache_get("nasa_stellarhosts", tic_id)
+    if cached:
+        cached["cache_status"] = "hit"
+        return cached
+
+    try:
+        escaped_hostname = hostname.replace("'", "''")
+        adql = (
+            f"SELECT DISTINCT st_mass, st_rad, st_teff, st_logg "
+            f"FROM stellarhosts "
+            f"WHERE hostname='{escaped_hostname}'"
+        )
+        params = urllib.parse.urlencode({
+            "query": adql,
+            "format": "json",
+        })
+        url = f"https://exoplanetarchive.ipac.caltech.edu/TAP/sync?{params}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "SarkarExoHunter/3.0 (stellarhosts_grounding)"
+        })
+        with _urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list) and data:
+                row = data[0]
+                rad = _safe_float(row.get("st_rad"))
+                mass = _safe_float(row.get("st_mass"))
+                teff = _safe_float(row.get("st_teff"))
+                logg = _safe_float(row.get("st_logg"))
+                
+                if rad is not None and 0.01 < rad < 100:
+                    if mass is None or mass <= 0:
+                        mass = rad ** 1.25
+                    result = {
+                        "rad": round(rad, 4),
+                        "mass": round(mass, 4),
+                        "Teff": round(teff, 0) if teff else None,
+                        "logg": round(logg, 3) if logg else None,
+                        "source": "nasa_stellarhosts",
+                        "cache_status": "miss_saved",
+                    }
+                    _cache_set("nasa_stellarhosts", tic_id, result)
+                    return result
+        return _unavailable("No stellarhosts parameters found")
+    except Exception as e:
+        return _unavailable(f"stellarhosts query error: {str(e)[:120]}")
+
+
+def fetch_kic_epic_stellar_params(tic_id: str) -> dict:
+    """
+    Query Kepler KIC or K2 EPIC stellar parameters via VizieR TAP.
+    """
+    cached = _cache_get("kic_epic", tic_id)
+    if cached:
+        cached["cache_status"] = "hit"
+        return cached
+
+    try:
+        adql_xmatch = (
+            f"SELECT TOP 1 \"KIC\", \"EPIC\" "
+            f"FROM \"IV/39/tic82\" "
+            f"WHERE \"TIC\"={int(tic_id)}"
+        )
+        xmatch = _query_vizier_tap(adql_xmatch)
+        if not xmatch:
+            return _unavailable("No Kepler/K2 cross-match in TIC")
+        
+        row_xm = xmatch[0]
+        kic_id = _safe_float(row_xm.get("KIC"))
+        epic_id = _safe_float(row_xm.get("EPIC"))
+
+        if kic_id and kic_id > 0:
+            adql_kic = (
+                f"SELECT TOP 1 \"rad\", \"mass\", \"teff\", \"logg\" "
+                f"FROM \"V/133/kic\" "
+                f"WHERE \"KIC\"={int(kic_id)}"
+            )
+            kic_res = _query_vizier_tap(adql_kic)
+            if kic_res:
+                row = kic_res[0]
+                rad = _safe_float(row.get("rad"))
+                mass = _safe_float(row.get("mass"))
+                teff = _safe_float(row.get("teff"))
+                logg = _safe_float(row.get("logg"))
+                if rad is not None and 0.01 < rad < 100:
+                    if mass is None or mass <= 0:
+                        mass = rad ** 1.25
+                    result = {
+                        "rad": round(rad, 4),
+                        "mass": round(mass, 4),
+                        "Teff": round(teff, 0) if teff else None,
+                        "logg": round(logg, 3) if logg else None,
+                        "source": "kic_stellar",
+                        "kic_id": int(kic_id),
+                        "cache_status": "miss_saved",
+                    }
+                    _cache_set("kic_epic", tic_id, result)
+                    return result
+
+        if epic_id and epic_id > 0:
+            adql_epic = (
+                f"SELECT TOP 1 \"rad\", \"mass\", \"teff\", \"logg\" "
+                f"FROM \"IV/34/epic\" "
+                f"WHERE \"EPIC\"={int(epic_id)}"
+            )
+            epic_res = _query_vizier_tap(adql_epic)
+            if epic_res:
+                row = epic_res[0]
+                rad = _safe_float(row.get("rad"))
+                mass = _safe_float(row.get("mass"))
+                teff = _safe_float(row.get("teff"))
+                logg = _safe_float(row.get("logg"))
+                if rad is not None and 0.01 < rad < 100:
+                    if mass is None or mass <= 0:
+                        mass = rad ** 1.25
+                    result = {
+                        "rad": round(rad, 4),
+                        "mass": round(mass, 4),
+                        "Teff": round(teff, 0) if teff else None,
+                        "logg": round(logg, 3) if logg else None,
+                        "source": "epic_stellar",
+                        "epic_id": int(epic_id),
+                        "cache_status": "miss_saved",
+                    }
+                    _cache_set("kic_epic", tic_id, result)
+                    return result
+        
+        return _unavailable("Kepler/K2 cross-matched but no valid parameters found")
+    except Exception as e:
+        return _unavailable(f"KIC/EPIC query error: {str(e)[:120]}")
+
+
+# ═══════════════════════════════════════════════════════════════
 # 3. STELLAR LOCKDOWN — PRIORITY CASCADE
 # ═══════════════════════════════════════════════════════════════
 
@@ -419,19 +731,14 @@ def resolve_stellar_lockdown(
     """
     Master stellar parameter resolver with Catalog-First enforcement and Multi-Source Consensus.
 
-    Priority cascade:
-        1. Gaia DR3  → gold-standard
-        2. TIC v8.2  → primary fallback
-        3. Ab-Initio → LAST RESORT, flagged with warning
-
-    The 'source_authority' field indicates the provenance:
-        "gaia_dr3_hardlock" → manually locked
-        "gaia_dr3"          → highest confidence
-        "tic_v8"            → high confidence
-        "stellar_confusion_alert" → discrepancy >20%
-        "ab_initio_fallback" → low confidence, transit-derived
+    Priority cascade for consensus and fallback:
+        1. HARDLOCKED_TICS
+        2. NASA Exoplanet Archive (pscomppars / stellarhosts)
+        3. Gaia DR3
+        4. TIC v8.2
+        5. Kepler KIC / K2 EPIC
+        6. Ab-Initio fallback (last resort)
     """
-    # ── Hard-Lock for Known TICs (MAST Offline Bypass) ──
     identity_context = enforce_isolated_target_lookup(
         tic_id,
         current_target_name=claimed_name,
@@ -453,7 +760,6 @@ def resolve_stellar_lockdown(
         "260304296": {"rad": 1.27, "mass": 1.12, "teff": 5800.0, "logg": 4.35, "crowdsap": 0.98, "name": "WASP-126 b"},
         "241569046": {"rad": 1.22, "mass": 1.25, "teff": 6400.0, "logg": 4.37, "crowdsap": 0.892, "name": "WASP-18b"},
         "111991770": {"rad": 1.50, "mass": 1.20, "teff": 6300.0, "logg": 4.17, "crowdsap": 0.98, "name": "WASP-15b"},
-        # ── v5.0 WASP-4b G7V Spectral Mask — T_eff forced to 5500K to stop Solar Defaulting ──
         "402026209": {"rad": 0.90, "mass": 0.92, "teff": 5500.0, "logg": 4.48, "crowdsap": 0.98, "name": "WASP-4b"},
         "220475245": {"rad": 0.90, "mass": 0.97, "teff": 5397.0, "logg": 4.44, "crowdsap": 0.98, "name": "TOI-132 b"},
     }
@@ -472,65 +778,117 @@ def resolve_stellar_lockdown(
             benchmark_period_days=prior.get("period_days"),
         )
 
-    # Fetch from both sources
+    # Fetch from all active engines
+    nasa = fetch_nasa_archive_stellar_params(tic_id)
     gaia = fetch_gaia_stellar_params(tic_id)
     tic = fetch_tic_v8_params(tic_id)
+    kic_epic = fetch_kic_epic_stellar_params(tic_id)
+    
+    # Try resolving host star by common name if known
+    hosts = _unavailable("No common name resolved")
+    common_name = identity_context.verified_name or claimed_name
+    if common_name:
+        hosts = fetch_nasa_stellarhosts_params(tic_id, common_name)
 
-    gaia_rad = gaia.get("rad") if gaia.get("source") == "gaia_dr3" else None
-    tic_rad = tic.get("rad") if tic.get("source") == "tic_v8" else None
+    # Multi-Source Consensus compilation
+    successful_lookups = []
+    for lookup in [nasa, hosts, gaia, tic, kic_epic]:
+        if lookup.get("source") != "unavailable" and lookup.get("rad") is not None:
+            successful_lookups.append(lookup)
+
     catalog_discrepancy = None
+    adopted_rad, adopted_mass, adopted_teff, adopted_logg = None, None, None, None
+    adopted_feh = 0.0
+    adopted_source = None
+    derivation_str = ""
 
-    # ── Multi-Source Consensus Check ──
-    if gaia_rad and tic_rad:
-        diff_pct = abs(gaia_rad - tic_rad) / max(gaia_rad, tic_rad) * 100.0
-        if diff_pct > 10.0:
-            catalog_discrepancy = (
-                f"Gaia R_star ({gaia_rad:.3f}) and TIC R_star ({tic_rad:.3f}) "
-                f"disagree by {diff_pct:.1f} percent (>10%); Gaia is the ABSOLUTE ground truth."
+    if successful_lookups:
+        # Collect values
+        radii = [l["rad"] for l in successful_lookups]
+        masses = [l["mass"] for l in successful_lookups if l.get("mass") is not None]
+        teffs = [l["Teff"] for l in successful_lookups if l.get("Teff") is not None]
+        loggs = [l["logg"] for l in successful_lookups if l.get("logg") is not None]
+        fehs = [l["feh"] for l in successful_lookups if l.get("feh") is not None]
+
+        # Calculate consensus values
+        median_rad = statistics.median(radii)
+        median_mass = statistics.median(masses) if masses else median_rad ** 1.25
+        median_teff = statistics.median(teffs) if teffs else T_SUN
+        median_logg = statistics.median(loggs) if loggs else None
+        median_feh = statistics.median(fehs) if fehs else 0.0
+
+        # Check maximum discrepancy
+        max_rad_diff = (max(radii) - min(radii)) / median_rad * 100.0 if len(radii) > 1 else 0.0
+        
+        # If consensus is high (agreement < 10%), use median values
+        if len(successful_lookups) >= 2 and max_rad_diff <= 10.0:
+            adopted_rad = median_rad
+            adopted_mass = median_mass
+            adopted_teff = median_teff
+            adopted_logg = median_logg
+            adopted_feh = median_feh
+            adopted_source = "stellar_consensus"
+            
+            sources_list = ", ".join([l["source"] for l in successful_lookups])
+            derivation_str = (
+                f"Multi-Source Catalog Consensus adopted across: [{sources_list}]. "
+                f"Consensus values (median): R_★ = {adopted_rad:.4f} R☉, M_★ = {adopted_mass:.4f} M☉, T_eff = {adopted_teff:.0f} K, [Fe/H] = {adopted_feh:.2f}. "
+                f"Maximum catalog radius discrepancy was extremely low: {max_rad_diff:.2f}%."
             )
-        # ── v5.0 Gaia DR3 Hard-Lock Consensus Rule ──
-        # If TIC v8.2 and Gaia differ by >10%, Gaia is the absolute ground truth.
-        # Previously disabled (if False); now enforced per Project Omni-Science directive.
-        if diff_pct > 10.0:
-            return _build_lockdown(
-                rad=gaia_rad, mass=gaia.get("mass") or (gaia_rad**1.25), teff=gaia.get("Teff") or T_SUN,
-                logg=tic.get("logg"), contratio=tic.get("contratio", 0.0),
-                source_authority="gaia_dr3",
-                derivation=(
-                    f"GAIA HARD-LOCK: Gaia R_star ({gaia_rad:.3f}) and TIC R_star ({tic_rad:.3f}) "
-                    f"disagree by {diff_pct:.1f}% (>10%). Gaia DR3 is absolute ground truth."
-                ),
-                catalog_discrepancy_alert=catalog_discrepancy,
-            )
+        else:
+            # Fall back to priority hierarchy
+            source_priority = ["nasa_archive", "nasa_stellarhosts", "gaia_dr3", "tic_v8", "kic_epic"]
+            chosen = None
+            for p in source_priority:
+                for lookup in successful_lookups:
+                    if lookup["source"] == p:
+                        chosen = lookup
+                        break
+                if chosen:
+                    break
 
-    # ── Tier 1: Gaia DR3 ──
-    if gaia_rad:
-        rad = gaia_rad
-        mass = gaia.get("mass") or (rad ** 1.25)
-        teff = gaia.get("Teff") or (T_SUN * (mass ** 0.57))
-        return _build_lockdown(
-            rad=rad, mass=mass, teff=teff,
-            logg=tic.get("logg"), contratio=tic.get("contratio", 0.0),
-            source_authority="gaia_dr3",
-            derivation=(
-                f"Stellar Lockdown from Gaia DR3 (source_id={gaia.get('gaia_source_id', 'unknown')}): "
-                f"R_★ = {rad:.4f} R☉, M_★ = {mass:.4f} M☉, T_eff = {teff:.0f} K."
-            ),
-        )
+            if chosen:
+                adopted_rad = chosen["rad"]
+                adopted_mass = chosen.get("mass") or (adopted_rad ** 1.25)
+                adopted_teff = chosen.get("Teff") or (T_SUN * (adopted_mass ** 0.57))
+                adopted_logg = chosen.get("logg")
+                adopted_feh = chosen.get("feh") if chosen.get("feh") is not None else 0.0
+                adopted_source = chosen["source"]
+                
+                # Check for specific Gaia vs TIC > 10% discrepancy alert
+                gaia_rad = gaia.get("rad") if gaia.get("source") == "gaia_dr3" else None
+                tic_rad = tic.get("rad") if tic.get("source") == "tic_v8" else None
+                if gaia_rad and tic_rad:
+                    diff_pct = abs(gaia_rad - tic_rad) / max(gaia_rad, tic_rad) * 100.0
+                    if diff_pct > 10.0:
+                        catalog_discrepancy = (
+                            f"Gaia R_star ({gaia_rad:.3f}) and TIC R_star ({tic_rad:.3f}) "
+                            f"disagree by {diff_pct:.1f} percent (>10%); Gaia/Archive is adopted."
+                        )
 
-    # ── Tier 2: TIC v8.2 ──
-    if tic_rad:
-        rad = tic_rad
-        mass = tic.get("mass") or (rad ** 1.25)
-        teff = tic.get("Teff") or (T_SUN * (mass ** 0.57))
+                derivation_str = (
+                    f"Stellar Lockdown from {adopted_source}: "
+                    f"R_★ = {adopted_rad:.4f} R☉, M_★ = {adopted_mass:.4f} M☉, T_eff = {adopted_teff:.0f} K, [Fe/H] = {adopted_feh:.2f}."
+                )
+                if catalog_discrepancy:
+                    derivation_str += f" Alert: {catalog_discrepancy}"
+
+    # If any successful values resolved, build the lockdown
+    if adopted_rad is not None:
+        # Fetch first valid contamination ratio
+        contratio = 0.0
+        for l in [tic, gaia, nasa]:
+            if l.get("contratio") is not None:
+                contratio = l["contratio"]
+                break
+        
         return _build_lockdown(
-            rad=rad, mass=mass, teff=teff,
-            logg=tic.get("logg"), contratio=tic.get("contratio", 0.0),
-            source_authority="tic_v8",
-            derivation=(
-                f"Stellar Lockdown from TIC v8.2: "
-                f"R_★ = {rad:.4f} R☉, M_★ = {mass:.4f} M☉, T_eff = {teff:.0f} K."
-            ),
+            rad=adopted_rad, mass=adopted_mass, teff=adopted_teff,
+            logg=adopted_logg, contratio=contratio,
+            source_authority=adopted_source,
+            derivation=derivation_str,
+            catalog_discrepancy_alert=catalog_discrepancy,
+            feh=adopted_feh,
         )
 
     # ── Tier 3: Ab-Initio (LAST RESORT) ──
@@ -567,6 +925,7 @@ def resolve_stellar_lockdown(
     )
 
 
+
 def _build_lockdown(
     rad: float, mass: float, teff: float,
     logg: Optional[float], contratio: float,
@@ -577,6 +936,7 @@ def _build_lockdown(
     benchmark_planet_radius_earth: Optional[float] = None,
     benchmark_period_days: Optional[float] = None,
     catalog_discrepancy_alert: Optional[str] = None,
+    feh: Optional[float] = None,
 ) -> dict:
     """Build a standardized StellarLockdown dict."""
     rho_sun = M_SUN / ((4.0 / 3.0) * math.pi * R_SUN ** 3)
@@ -605,7 +965,9 @@ def _build_lockdown(
         "derivation": derivation,
         "ab_initio_warning": ab_initio_warning,
         "catalog_discrepancy_alert": catalog_discrepancy_alert,
+        "feh": round(feh, 3) if feh is not None else 0.0,
     }
+
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -649,7 +1011,7 @@ def resolve_tic_common_name(tic_id: str) -> dict:
         req = urllib.request.Request(url, headers={
             "User-Agent": "SarkarExoHunter/3.0 (metadata)"
         })
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             toi_data = json.loads(resp.read().decode("utf-8"))
             if isinstance(toi_data, list) and toi_data:
                 result["toi_id"] = f"TOI-{toi_data[0].get('toi', '')}"
@@ -672,7 +1034,7 @@ def resolve_tic_common_name(tic_id: str) -> dict:
         req = urllib.request.Request(url, headers={
             "User-Agent": "SarkarExoHunter/3.0 (metadata)"
         })
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             ps_data = json.loads(resp.read().decode("utf-8"))
             if isinstance(ps_data, list) and ps_data:
                 result["common_name"] = ps_data[0].get("hostname")
@@ -783,7 +1145,7 @@ def verify_against_nasa_archive(
         req = urllib.request.Request(url, headers={
             "User-Agent": "SarkarExoHunter/3.0 (archive_verify)"
         })
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         if not isinstance(data, list) or not data:
