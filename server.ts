@@ -461,31 +461,9 @@ interface AsyncBridgeStatus {
 }
 
 async function runPythonJson(args: string[]): Promise<any> {
-  const { execFile } = await import("child_process");
-  const pythonBin = process.env.EXOHUNTER_PYTHON_BIN || "python";
-
-  return await new Promise((resolve, reject) => {
-    execFile(
-      pythonBin,
-      args,
-      { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(stderr?.trim() || error.message));
-          return;
-        }
-        try {
-          resolve(JSON.parse((stdout || "").trim() || "{}"));
-        } catch (parseError: any) {
-          reject(
-            new Error(
-              `Failed to parse Python bridge output: ${parseError.message}. Raw output: ${stdout}`
-            )
-          );
-        }
-      }
-    );
-  });
+  // Deprecated: this function is no longer used for most calls,
+  // as we now route via the FastAPI microservice.
+  throw new Error("runPythonJson is deprecated. Use direct fetch to FastAPI.");
 }
 
 async function enqueueAnalysisJob(
@@ -493,26 +471,30 @@ async function enqueueAnalysisJob(
   period: number,
   transitDuration?: number
 ): Promise<AsyncBridgeStatus> {
-  const args = [
-    "-m",
-    "exohunter.async_bridge",
-    "enqueue-profile",
-    ticId,
-    String(period),
-  ];
-  if (transitDuration !== undefined) {
-    args.push(String(transitDuration));
+  const payload = {
+    tic_id: ticId,
+    period_days: period,
+    transit_duration_hours: transitDuration,
+  };
+  const response = await fetch("http://127.0.0.1:8000/enqueue-profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`FastAPI enqueue failed: ${errorText}`);
   }
-  return (await runPythonJson(args)) as AsyncBridgeStatus;
+  return (await response.json()) as AsyncBridgeStatus;
 }
 
 async function readAnalysisJobStatus(jobId: string): Promise<AsyncBridgeStatus> {
-  return (await runPythonJson([
-    "-m",
-    "exohunter.async_bridge",
-    "status",
-    jobId,
-  ])) as AsyncBridgeStatus;
+  const response = await fetch(`http://127.0.0.1:8000/status/${jobId}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`FastAPI status check failed: ${errorText}`);
+  }
+  return (await response.json()) as AsyncBridgeStatus;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -988,24 +970,23 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
         return res.status(400).json({ error: "ticId required" });
       }
 
-      const { exec } = await import("child_process");
-      const { promisify } = await import("util");
-      const execAsync = promisify(exec);
+      const payload: any = { tic_id: ticId };
+      if (radius !== undefined && radius !== null) payload.radius = Number(radius);
+      if (period !== undefined && period !== null) payload.period = Number(period);
 
-      let cmd = `python -X utf8 -m exohunter.async_bridge verify-archive ${ticId}`;
-      if (radius !== undefined && radius !== null) {
-        cmd += ` --radius ${radius}`;
-      }
-      if (period !== undefined && period !== null) {
-        cmd += ` --period ${period}`;
-      }
-
-      const { stdout, stderr } = await execAsync(cmd, { maxBuffer: 1024 * 1024 * 10 });
-      if (stderr && !stdout) {
-        console.error("Verify-archive stderr:", stderr);
+      const response = await fetch("http://127.0.0.1:8000/verify-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Verify-archive error:", errorText);
         return res.status(500).json({ error: "Archive verification failed" });
       }
-      const result = JSON.parse(stdout.trim());
+
+      const result = await response.json();
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1071,8 +1052,11 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
       
       // We will push the result to Firebase using existing methods in server.ts
       // For instance, pushing a thesis automatically if Confirmed.
-      const thesisRef = db.collection("discovery_theses").doc(String(ticId));
-      await thesisRef.set({
+      const { db } = await import("./src/lib/firebase.js");
+      const { doc, setDoc } = await import("firebase/firestore");
+      
+      const thesisRef = doc(db, "discovery_theses", String(ticId));
+      await setDoc(thesisRef, {
         ticId: String(ticId),
         payload: payload,
         researcherName: "God-Tier Async Pipeline",
@@ -1378,6 +1362,28 @@ If zero records exist, apply the "[PRIMARY CANDIDATE - UNVETTED]" badge.`;
           : 0;
       const snr = baselineStdDev > 0 ? measuredDepth / baselineStdDev : 0;
 
+      let cnnPriorStr = "CNN Prior: Not available (Bypassed or Error).";
+      try {
+        const cnnRes = await fetch("http://127.0.0.1:8000/evaluate-cnn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flux: lightCurve.flux })
+        });
+        if (cnnRes.ok) {
+          const cnnData = await cnnRes.json();
+          if (cnnData.status === "success") {
+            cnnPriorStr = `DEEP LEARNING CNN PRIOR:
+- Planet Probability: ${(cnnData.p_planet * 100).toFixed(2)}%
+- Eclipsing Binary Probability: ${(cnnData.p_eb * 100).toFixed(2)}%
+- Noise/Junk Probability: ${(cnnData.p_noise * 100).toFixed(2)}%`;
+          } else {
+            cnnPriorStr = `CNN Prior: ${cnnData.reason || cnnData.status}`;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch CNN prior", err);
+      }
+
       const agent1Prompt = `You are a NASA-level Exoplanet Transit Vetting Filter analyzing TESS light curve data for TIC ${ticId}.
 
 DATA SOURCE: ${lightCurve.source === "mast" ? "Real NASA MAST Archive (Exo.MAST API)" : "Simulated photometry"}
@@ -1389,6 +1395,8 @@ STATISTICAL SUMMARY:
 - Baseline standard deviation: ${baselineStdDev.toFixed(6)}
 - Measured transit depth (delta_F/F): ${measuredDepth.toFixed(6)}
 - Signal-to-Noise Ratio (depth/stddev): ${snr.toFixed(2)}
+
+${cnnPriorStr}
 
 RAW SAMPLE — Transit region (phase ≈ 0):
 ${lightCurve.flux
@@ -1405,7 +1413,7 @@ ${lightCurve.flux
   .join(", ")}
 
 STRICT "FALSE POSITIVE" DEATH TEST:
-1. Eclipsing Binaries (EB): A planet transit creates a U-shaped (flat) bottom. An eclipsing binary creates a V-shaped (pointed) bottom. If V-shaped, REJECT.
+1. Eclipsing Binaries (EB): A planet transit creates a U-shaped (flat) bottom. An eclipsing binary creates a V-shaped (pointed) bottom. If V-shaped, or if CNN says EB probability > 50%, REJECT.
 2. Secondary Eclipses: If there is a second, smaller dip at phase ~0.5, it's almost certainly two stars. REJECT.
 3. SNR Check: If SNR < 3, the signal is likely noise. REJECT.
 

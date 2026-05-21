@@ -312,13 +312,23 @@ def stitch_multisector_light_curve(tic_id: str, author: str = "SPOC") -> dict:
                 "reason": "The TESS search succeeded, but no sector files could be downloaded.",
             }
 
-        stitched = collection.stitch().remove_nans()
-        time_values = stitched.time.value.tolist() if hasattr(stitched.time, "value") else list(stitched.time)
-        flux_values = stitched.flux.value.tolist() if hasattr(stitched.flux, "value") else list(stitched.flux)
+        stitched_list = []
         sectors = []
         sector_series = []
         for light_curve in collection:
             cleaned = light_curve.remove_nans()
+            
+            # Apply CBV per-sector BEFORE stitching
+            try:
+                from lightkurve.correctors import CBVCorrector
+                corrector = CBVCorrector(cleaned)
+                cleaned = corrector.correct()
+            except Exception as e:
+                import sys
+                print(f"CBV correction failed for sector: {e}", file=sys.stderr)
+            
+            stitched_list.append(cleaned)
+            
             sector = cleaned.meta.get("SECTOR") if hasattr(cleaned, "meta") else None
             if sector is not None:
                 sectors.append(int(sector))
@@ -331,6 +341,14 @@ def stitch_multisector_light_curve(tic_id: str, author: str = "SPOC") -> dict:
                     "flux": sector_flux,
                 }
             )
+
+        if stitched_list:
+            import lightkurve as lk
+            stitched = lk.LightCurveCollection(stitched_list).stitch()
+            time_values = stitched.time.value.tolist() if hasattr(stitched.time, "value") else list(stitched.time)
+            flux_values = stitched.flux.value.tolist() if hasattr(stitched.flux, "value") else list(stitched.flux)
+        else:
+            return {"status": "error", "reason": "No valid sectors after cleaning."}
 
         return {
             "status": "success",

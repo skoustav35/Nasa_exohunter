@@ -1,0 +1,24 @@
+{
+  "dynamic_gaia_crowdsap": {
+    "261136679": {
+      "cached_at": 1779289641.3993793,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 8,
+        "dynamic_crowdsap": 0.99999,
+        "max_contamination_frac": 3e-06,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "463402815": {
+      "cached_at": 1779283359.2590373,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 151,
+        "dynamic_crowdsap": 0.539749,
+        "max_contamination_frac": 0.599897,
+        "source": "dynamic_gaia_dr3"
+      }
+    }
+  }
+}

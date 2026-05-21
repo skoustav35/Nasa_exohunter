@@ -1,18 +1,16 @@
-version: "3.9"
+version: '3.8'
 
 services:
-  app:
-    build: .
+  redis:
+    image: redis:7.2-alpine
+    container_name: exohunter_queue_broker
     ports:
-      - "3000:3000"
-    depends_on:
-      - redis
-    environment:
-      EXOHUNTER_CELERY_BROKER_URL: redis://redis:6379/0
-      EXOHUNTER_CELERY_RESULT_BACKEND: redis://redis:6379/1
+      - "6379:6379"
+    restart: always
 
   celery_worker:
     build: .
+    container_name: exohunter_physics_worker
     command: celery -A exohunter.celery_app worker --loglevel=info --concurrency=4
     volumes:
       - .:/app
@@ -20,8 +18,4 @@ services:
       - redis
     env_file:
       - .env
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: always
