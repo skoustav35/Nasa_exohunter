@@ -18,13 +18,17 @@ export function DiscoveryLab() {
     // Only successful discoveries
     const q = query(
       collection(db, 'queries'),
-      where('status', '==', 'New Discovery!'),
-      orderBy('createdAt', 'desc')
+      where('status', '==', 'New Discovery!')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data: any[] = [];
       snapshot.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => {
+        const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : (a.createdAt ? new Date(a.createdAt) : new Date(0));
+        const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : (b.createdAt ? new Date(b.createdAt) : new Date(0));
+        return dateB.getTime() - dateA.getTime();
+      });
       setDiscoveries(data);
     });
 

@@ -18,13 +18,17 @@ export function RejectionLab() {
     // Only rejected theses
     const q = query(
       collection(db, 'queries'),
-      where('status', '==', 'Rejected Thesis'),
-      orderBy('createdAt', 'desc')
+      where('status', '==', 'Rejected Thesis')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data: any[] = [];
       snapshot.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => {
+        const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : (a.createdAt ? new Date(a.createdAt) : new Date(0));
+        const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : (b.createdAt ? new Date(b.createdAt) : new Date(0));
+        return dateB.getTime() - dateA.getTime();
+      });
       setRejections(data);
     });
 

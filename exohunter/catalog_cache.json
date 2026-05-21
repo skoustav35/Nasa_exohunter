@@ -1,5 +1,35 @@
 {
   "dynamic_gaia_crowdsap": {
+    "146244533": {
+      "cached_at": 1779345098.8735864,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 113,
+        "dynamic_crowdsap": 0.921771,
+        "max_contamination_frac": 0.022115,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "164249928": {
+      "cached_at": 1779343648.1418233,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 15,
+        "dynamic_crowdsap": 0.606498,
+        "max_contamination_frac": 0.519418,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "21505121": {
+      "cached_at": 1779344398.4645476,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 6,
+        "dynamic_crowdsap": 0.953043,
+        "max_contamination_frac": 0.025774,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
     "261136679": {
       "cached_at": 1779289641.3993793,
       "payload": {
@@ -7,6 +37,66 @@
         "companions_count": 8,
         "dynamic_crowdsap": 0.99999,
         "max_contamination_frac": 3e-06,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "291555748": {
+      "cached_at": 1779343944.4885404,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 29,
+        "dynamic_crowdsap": 0.960912,
+        "max_contamination_frac": 0.013417,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "31374837": {
+      "cached_at": 1779344233.7415063,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 5,
+        "dynamic_crowdsap": 0.99967,
+        "max_contamination_frac": 0.000154,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "322901324": {
+      "cached_at": 1779343315.9746175,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 16,
+        "dynamic_crowdsap": 0.91182,
+        "max_contamination_frac": 0.045356,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "336399144": {
+      "cached_at": 1779342931.6783104,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 69,
+        "dynamic_crowdsap": 0.781676,
+        "max_contamination_frac": 0.095905,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "350823660": {
+      "cached_at": 1779350588.5784414,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 14,
+        "dynamic_crowdsap": 0.035939,
+        "max_contamination_frac": 15.141128,
+        "source": "dynamic_gaia_dr3"
+      }
+    },
+    "427715152": {
+      "cached_at": 1779344656.370926,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 6,
+        "dynamic_crowdsap": 0.881311,
+        "max_contamination_frac": 0.129562,
         "source": "dynamic_gaia_dr3"
       }
     },
@@ -18,6 +108,30 @@
         "dynamic_crowdsap": 0.539749,
         "max_contamination_frac": 0.599897,
         "source": "dynamic_gaia_dr3"
+      }
+    },
+    "9032368": {
+      "cached_at": 1779344887.5774832,
+      "payload": {
+        "cache_status": "miss_saved",
+        "companions_count": 4,
+        "dynamic_crowdsap": 0.837382,
+        "max_contamination_frac": 0.179187,
+        "source": "dynamic_gaia_dr3"
+      }
+    }
+  },
+  "nasa_archive": {
+    "31374837": {
+      "cached_at": 1779344225.753024,
+      "payload": {
+        "Teff": 4850.0,
+        "cache_status": "miss_saved",
+        "hostname": "TOI-431",
+        "logg": 4.6,
+        "mass": 0.78,
+        "rad": 0.731,
+        "source": "nasa_archive"
       }
     }
   }
