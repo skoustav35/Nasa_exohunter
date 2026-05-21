@@ -17,7 +17,7 @@ from exohunter.simulation import BayesianPipelineDirector
 def test_bayesian_pipeline_math_closure(mocker):
     """Verifies that fractional radius converts accurately and adheres to geometric depth rules."""
     mocker.patch('exohunter.simulation.LightcurveIngestor.fetch_and_clean', return_value=([], [], []))
-    mocker.patch('exohunter.simulation.WotanDetrender.apply', return_value=[])
+    mocker.patch('exohunter.simulation.WotanDetrender.apply', return_value=([], 0.0, 1.0))
     mocker.patch('juliet.utils.reverse_ichamp', return_value=([0.05], [0.0]))
     
     mock_fit = mocker.MagicMock()

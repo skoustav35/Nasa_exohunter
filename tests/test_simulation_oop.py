@@ -22,7 +22,7 @@ def test_bayesian_pipeline_math_closure(mocker):
     """
     # 1. Mock the heavy Juliet/Dynesty process so tests run in 0.1 seconds
     mocker.patch('exohunter.simulation.LightcurveIngestor.fetch_and_clean', return_value=([], [], []))
-    mocker.patch('exohunter.simulation.WotanDetrender.apply', return_value=[])
+    mocker.patch('exohunter.simulation.WotanDetrender.apply', return_value=([], 0.0, 1.0))
     
     # Mock reverse_ichamp to return a fixed radius ratio (p = 0.05) and impact (b = 0)
     mock_juliet_utils.reverse_ichamp.return_value = ([0.05], [0.0])

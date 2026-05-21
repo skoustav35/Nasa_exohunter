@@ -744,18 +744,26 @@ class WotanDetrender:
         # Adaptive GP Kernel Selection via Lomb-Scargle
         ls = LombScargle(time, flux)
         frequency, power = ls.autopower(minimum_frequency=1/20.0, maximum_frequency=1/0.5)
-        best_freq = frequency[np.argmax(power)]
+        max_idx = np.argmax(power)
+        best_freq = frequency[max_idx]
         p_rot = 1.0 / best_freq
+        fap = float(ls.false_alarm_probability(power[max_idx]))
         
-        flatten_flux, _ = wotan.flatten(
-            time, flux, window_length=window_length, method='biweight', return_trend=True
-        )
-        return flatten_flux, p_rot
+        if fap < 0.01:
+            # Significant rotation detected: use gp method with kernel_size scaled to p_rot
+            flatten_flux, _ = wotan.flatten(
+                time, flux, method='gp', kernel='matern', kernel_size=p_rot, return_trend=True
+            )
+        else:
+            flatten_flux, _ = wotan.flatten(
+                time, flux, window_length=window_length, method='biweight', return_trend=True
+            )
+        return flatten_flux, p_rot, fap
 
 class JulietPriorBuilder:
     """Builds non-degenerate multi-instrument priors with Espinoza parameterizations and Joint Multi-Planet support."""
     @staticmethod
-    def build(period_guess, epoch_guess, p_rot=None, extra_planets=None):
+    def build(period_guess, epoch_guess, p_rot=None, fap=None, extra_planets=None):
         priors = {}
         
         planets = [{'period': period_guess, 'epoch': epoch_guess}]
@@ -779,7 +787,10 @@ class JulietPriorBuilder:
         # Adaptive GP Kernel bounds centered around P_rot
         priors['GP_sigma_TESS'] = {'distribution': 'loguniform', 'min': 1e-6, 'max': 1e-1}
         if p_rot and p_rot > 0:
-            priors['GP_rho_TESS'] = {'distribution': 'loguniform', 'min': max(1e-2, p_rot * 0.1), 'max': p_rot * 10.0}
+            if fap is not None and fap < 0.01:
+                priors['GP_rho_TESS'] = {'distribution': 'uniform', 'min': p_rot * 0.8, 'max': p_rot * 1.2}
+            else:
+                priors['GP_rho_TESS'] = {'distribution': 'loguniform', 'min': max(1e-2, p_rot * 0.1), 'max': p_rot * 10.0}
         else:
             priors['GP_rho_TESS'] = {'distribution': 'loguniform', 'min': 1e-2, 'max': 1e2}
         return priors
@@ -828,8 +839,8 @@ class BayesianPipelineDirector:
                     "physical_integrity_score": 85
                 }
 
-            flat_flux, p_rot = WotanDetrender.apply(time, flux)
-            priors = JulietPriorBuilder.build(self.period, self.epoch, p_rot=p_rot)
+            flat_flux, p_rot, fap = WotanDetrender.apply(time, flux)
+            priors = JulietPriorBuilder.build(self.period, self.epoch, p_rot=p_rot, fap=fap)
             
             dataset = juliet.load(
                 priors=priors, t_lc={'TESS': time}, y_lc={'TESS': flat_flux}, 

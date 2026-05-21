@@ -187,6 +187,7 @@ class Engine_Centroid_Drift_Evaluator:
         flagged = report.get("flagged", False)
         prf_status = "not_run"
         prf_shift = None
+        offset_significance = None
         
         # If centroid shift is ambiguous or flagged, perform rigorous PRF vetting
         if report.get("status") == "unavailable" or flagged:
@@ -195,12 +196,41 @@ class Engine_Centroid_Drift_Evaluator:
                 tic_id = target_context.get("tic_id")
                 period = light_curve_data.get("period_days")
                 duration = light_curve_data.get("duration_hours")
+                # Use transit epoch from modeling if available, otherwise use 0.0
+                t0 = float(
+                    light_curve_data.get("t0_epoch")
+                    or target_context.get("t0_epoch")
+                    or 0.0
+                )
                 if tic_id and period and duration:
-                    prf_report = perform_prf_difference_imaging(str(tic_id), period, 1325.0, duration) # Using default epoch if not provided
+                    prf_report = perform_prf_difference_imaging(
+                        str(tic_id), period, t0, duration
+                    )
                     prf_status = prf_report.get("status", "error")
                     if prf_status == "success":
                         prf_shift = prf_report.get("prf_shift_pixels")
-                        flagged = not prf_report.get("is_on_target", True)
+                        offset_significance = prf_report.get("offset_significance_sigma", 0.0)
+                        
+                        # Graduated rejection based on offset significance:
+                        #   >3σ offset = force reject (definite off-target source)
+                        #   2-3σ offset = warning flag (ambiguous)
+                        #   <2σ offset = on-target (transit source confirmed)
+                        if offset_significance >= 3.0:
+                            flagged = True
+                        elif offset_significance >= 2.0:
+                            flagged = False  # Don't force-reject, but add warning
+                            target_context.setdefault("anomaly_engine_audit", []).append(
+                                {
+                                    "engine": "Engine_PRF_Marginal_Warning",
+                                    "severity": "marginal",
+                                    "offset_significance_sigma": round(offset_significance, 2),
+                                    "prf_shift_pixels": round(prf_shift, 4) if prf_shift else None,
+                                    "note": f"PRF offset significance {offset_significance:.1f}σ is between 2-3σ; ambiguous source location.",
+                                }
+                            )
+                        else:
+                            flagged = False
+                        
                         report["shift_pixels"] = prf_shift
             except Exception as e:
                 import sys
@@ -211,11 +241,13 @@ class Engine_Centroid_Drift_Evaluator:
                 "engine": "Engine_Centroid_Drift_Evaluator",
                 "status": prf_status if prf_status != "not_run" else report.get("status"),
                 "shift_pixels": prf_shift if prf_shift is not None else report.get("shift_pixels"),
+                "offset_significance_sigma": round(offset_significance, 2) if offset_significance is not None else None,
                 "flagged": flagged,
             }
         )
         if flagged:
-            target_context["force_rejection_reason"] = "Pixel-level PRF centroid drift localizes the transit off-target."
+            significance_msg = f" (offset significance: {offset_significance:.1f}σ)" if offset_significance else ""
+            target_context["force_rejection_reason"] = f"Pixel-level PRF Gaussian PSF centroid drift localizes the transit off-target{significance_msg}."
         return target_context
 
 

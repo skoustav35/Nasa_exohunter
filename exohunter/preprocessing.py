@@ -501,8 +501,33 @@ def apply_gp_detrending(
                 x_train = x[train_mask]
                 y_train = y[train_mask]
                 sigma = float(np.std(y_train))
-                rho = max(float(np.median(np.diff(np.sort(x_train)))), (float(x_train.max()) - float(x_train.min())) / 30.0)
-                kernel = terms.Matern32Term(sigma=max(sigma, 1e-5), rho=max(rho, 1e-4))
+                
+                # Check for stellar rotation period using Lomb-Scargle on out-of-transit flux
+                p_rot = None
+                ls_power = 0.0
+                try:
+                    from astropy.timeseries import LombScargle
+                    ls = LombScargle(x_train, y_train)
+                    frequency, power = ls.autopower(minimum_frequency=1/20.0, maximum_frequency=1/0.5)
+                    max_idx = np.argmax(power)
+                    ls_power = float(power[max_idx])
+                    p_rot = float(1.0 / frequency[max_idx])
+                except Exception:
+                    pass
+                
+                if p_rot is not None and ls_power > 0.1:
+                    # Quasi-Periodic double SHO kernel (fundamental + first harmonic)
+                    kernel_fundamental = terms.SHOTerm(sigma=sigma, Q=1.0/np.sqrt(2.0), rho=p_rot)
+                    kernel_harmonic = terms.SHOTerm(sigma=sigma * 0.5, Q=1.0/np.sqrt(2.0), rho=p_rot / 2.0)
+                    kernel = kernel_fundamental + kernel_harmonic
+                    method_name = "celerite2-gp-qp"
+                    reason_msg = f"celerite2 Quasi-Periodic GP (P_rot={p_rot:.2f}d, power={ls_power:.3f}) removed stellar variability."
+                else:
+                    rho = max(float(np.median(np.diff(np.sort(x_train)))), (float(x_train.max()) - float(x_train.min())) / 30.0)
+                    kernel = terms.Matern32Term(sigma=max(sigma, 1e-5), rho=max(rho, 1e-4))
+                    method_name = "celerite2-gp"
+                    reason_msg = "celerite2 GP removed low-frequency stellar variability while masking transit samples."
+                
                 gp = GaussianProcess(kernel, mean=float(np.median(y_train)))
                 gp.compute(x_train, diag=np.full(len(x_train), max(sigma * 0.1, 1e-6) ** 2))
                 trend = gp.predict(y_train - float(np.median(y_train)), x) + float(np.median(y_train))
@@ -513,8 +538,8 @@ def apply_gp_detrending(
                     "time": time_values,
                     "flux": detrended,
                     "trend": trend.tolist(),
-                    "method": "celerite2-gp",
-                    "reason": "celerite2 GP removed low-frequency stellar variability while masking transit samples.",
+                    "method": method_name,
+                    "reason": reason_msg,
                 }
         except Exception:
             pass

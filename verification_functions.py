@@ -583,34 +583,31 @@ def run_verification(tic_id, period):
 # ═══════════════════════════════════════════════════════════════
 # 3. STELLAR DENSITY INFERENCE (APIE)
 # ═══════════════════════════════════════════════════════════════
-def isochrone_stellar_fit(tic_id: str = None) -> dict:
+def isochrone_stellar_fit(tic_id: str = None, teff_hint: float = None,
+                          logg_hint: float = None, feh_hint: float = None) -> dict:
     """
-    Performs dynamic stellar evolutionary track fitting using the MIST grids via the `isochrones` package.
-    Requires Gaia DR3 parameters and broadband photometry.
+    Performs dynamic stellar evolutionary track fitting using an embedded MIST
+    isochrone grid interpolator with Vizier/Gaia DR3 broadband photometry.
+
+    Priority cascade:
+      1. Gaia DR3 GSP-Phot parameters via Vizier TAP
+      2. Gaia BP-RP color-temperature relation (Casagrande & VandenBerg 2018)
+      3. Gaia absolute magnitude → logg derivation
+      4. Returns error if all remote queries fail (caller uses ab-initio fallback)
     """
     try:
-        from isochrones.mist import MIST_Isochrone
-        mist = MIST_Isochrone()
-        # In a full implementation, we would query Vizier TAP or ExoFOP for exact magnitudes (G, BP, RP, J, H, K).
-        # For demonstration of the "God-Tier" architecture, we return a mocked precise fit assuming successful MCMC convergence.
-        # This replaces the M ∝ R^1.25 scaling with rigorous theoretical constraints.
-        import sys
-        print(f"[ISOCHRONE FIT] Successfully initialized MIST isochrone grids for TIC {tic_id}", file=sys.stderr)
-        return {
-            "status": "success",
-            "stellar_radius_solar": 1.05,
-            "stellar_mass_solar": 1.10,
-            "effective_temperature_K": 5850,
-            "luminosity_solar": 1.2,
-            "age_gyr": 4.5,
-            "logg": 4.4,
-            "feh": 0.0,
-            "source": "isochrones_mist_grid"
-        }
+        from exohunter.isochrone_grid import fit_stellar_parameters_isochrone
+        result = fit_stellar_parameters_isochrone(
+            str(tic_id) if tic_id else "000000",
+            teff_hint=teff_hint,
+            logg_hint=logg_hint,
+            feh_hint=feh_hint,
+        )
+        return result
     except Exception as e:
         import sys
-        print(f"[ISOCHRONE FIT] Isochrones package unavailable or failed: {e}. Falling back to ab-initio physics.", file=sys.stderr)
-        return {"status": "error"}
+        print(f"[ISOCHRONE FIT] MIST grid interpolation failed: {e}. Falling back to ab-initio physics.", file=sys.stderr)
+        return {"status": "error", "reason": str(e)}
 
 def estimate_stellar_parameters(transit_duration_hours, period_days, depth=0.01, tic_id=None):
     """
@@ -620,7 +617,18 @@ def estimate_stellar_parameters(transit_duration_hours, period_days, depth=0.01,
     Then use main-sequence scaling relations to estimate R_* and M_*,
     OR dynamic Isochrone fitting if available.
     """
-    iso_fit = isochrone_stellar_fit(tic_id) if tic_id else {"status": "error"}
+    # Try to get TIC stellar params as hints for the isochrone fitter
+    tic_hints = {}
+    if tic_id:
+        try:
+            tic_params = fetch_tic_stellar_params(tic_id)
+            if tic_params and tic_params.get("source") not in ("unavailable", None):
+                tic_hints["teff_hint"] = tic_params.get("Teff")
+                tic_hints["logg_hint"] = tic_params.get("logg")
+        except Exception:
+            pass
+
+    iso_fit = isochrone_stellar_fit(tic_id, **tic_hints) if tic_id else {"status": "error"}
 
     P_sec = period_days * 86400.0
     dt_sec = transit_duration_hours * 3600.0
