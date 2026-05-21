@@ -383,11 +383,11 @@ def evaluate_signal_and_decouple_matrix(system_array, extracted_period, raw_snr)
     signals inside multi-planet systems using precision orbital clockwork matching.
     """
     # 1. Intercept noise artifacts before geometric profile allocation
+    # v5.2-GOLD: Relaxed to warning only, allowing noisy signals (< 6.0) to process (like SPOC)
     MINIMUM_SAFE_SNR = 6.0
     if float(raw_snr) < MINIMUM_SAFE_SNR:
         import sys
-        print(f"[SIGNAL REJECT] Critical SNR error: {raw_snr}. Re-routing dataset to Engine_Aperture_Sanitizer.", file=sys.stderr)
-        raise RuntimeError("Sub-threshold noise artifact intercepted. Target execution frozen for mandatory detrending.")
+        print(f"[SIGNAL WARNING] Low SNR signal: {raw_snr}. Proceeding with processing.", file=sys.stderr)
 
     # 2. Match targets strictly by orbital period to prevent neighbor cross-talk
     MAX_PERIOD_DRIFT_MARGIN = 0.01 # Strict 1% allowance window

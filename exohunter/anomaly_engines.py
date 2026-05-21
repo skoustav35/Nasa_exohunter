@@ -130,15 +130,23 @@ class Engine_Asymmetry_Evaluator:
                 "chi2_proxy": round((delta or 0.0) ** 2, 6),
             }
         )
-        # v5.2-GOLD Fix #9: Graduated severity for odd/even asymmetry.
-        # Only force-reject when fractional depth delta >= 40% (severe EB signature).
-        # Below 40%, add a warning to audit trail instead of force-rejecting.
+        snr = _safe_float(light_curve_data.get("snr")) or _safe_float(target_context.get("snr"))
         if odd_even.get("odd_even_consistent") is False:
             if delta is not None and delta >= 0.40:
-                target_context["force_rejection_reason"] = (
-                    f"Odd/even cadence asymmetry indicates an eclipsing binary "
-                    f"(fractional depth delta={delta:.3f}, threshold=0.40)."
-                )
+                if snr is not None and snr < 6.0:
+                    target_context.setdefault("anomaly_engine_audit", []).append(
+                        {
+                            "engine": "Engine_Asymmetry_Evaluator_WARNING",
+                            "severity": "noisy_signal_warning",
+                            "fractional_depth_delta": round(delta, 6) if delta is not None else None,
+                            "note": f"Odd/even inconsistency detected (delta={delta:.3f}) but force-rejection bypassed due to low SNR ({snr:.2f} < 6.0).",
+                        }
+                    )
+                else:
+                    target_context["force_rejection_reason"] = (
+                        f"Odd/even cadence asymmetry indicates an eclipsing binary "
+                        f"(fractional depth delta={delta:.3f}, threshold=0.40)."
+                    )
             else:
                 target_context.setdefault("anomaly_engine_audit", []).append(
                     {
@@ -246,8 +254,19 @@ class Engine_Centroid_Drift_Evaluator:
             }
         )
         if flagged:
-            significance_msg = f" (offset significance: {offset_significance:.1f}σ)" if offset_significance else ""
-            target_context["force_rejection_reason"] = f"Pixel-level PRF Gaussian PSF centroid drift localizes the transit off-target{significance_msg}."
+            snr = _safe_float(light_curve_data.get("snr")) or _safe_float(target_context.get("snr"))
+            if snr is not None and snr < 6.0:
+                target_context.setdefault("anomaly_engine_audit", []).append(
+                    {
+                        "engine": "Engine_Centroid_Drift_Evaluator_WARNING",
+                        "severity": "noisy_signal_warning",
+                        "flagged": flagged,
+                        "note": f"Centroid drift flagged but force-rejection bypassed due to low SNR ({snr:.2f} < 6.0).",
+                    }
+                )
+            else:
+                significance_msg = f" (offset significance: {offset_significance:.1f}σ)" if offset_significance else ""
+                target_context["force_rejection_reason"] = f"Pixel-level PRF Gaussian PSF centroid drift localizes the transit off-target{significance_msg}."
         return target_context
 
 

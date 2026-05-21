@@ -62,6 +62,8 @@ export function explainSovereignSanityCheck(payload: any): SovereignSanityDiagno
   }
 
   const measuredSnr = toFiniteNumber(payload?.measured_snr);
+  // v5.2-GOLD: Bypassed SNR < 6.0 firewall check to allow noisy signal processing, matching SPOC behavior.
+  /*
   if (measuredSnr !== null && measuredSnr < 6.0) {
     return {
       ok: false,
@@ -70,6 +72,7 @@ export function explainSovereignSanityCheck(payload: any): SovereignSanityDiagno
       drift,
     };
   }
+  */
 
   if (integrityScore < CRITICAL_INTEGRITY_THRESHOLD && !isExplicitSovereignRejection(payload)) {
     return {

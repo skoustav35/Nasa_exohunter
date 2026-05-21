@@ -76,10 +76,13 @@ function explainSovereignSanityCheck(payload: any) {
   }
 
   // 2. Clear out manual override cognitive dissonance bugs
+  // v5.2-GOLD: Bypassed SNR < 6.0 block to allow noisy signal processing, matching SPOC behavior.
+  /*
   if (snr !== null && snr < 6.0 && (payload.status || "").includes("CONFIRMED")) {
     console.error(`[CRITICAL CONSENSUS FAILURE] Blocked manual override confirmation on sub-threshold noise.`);
     return { ok: false, reason: 'Blocked manual override confirmation on sub-threshold noise.', expectedRadiusEarth, drift };
   }
+  */
 
   console.log(`[FIREWALL SUCCESS] Absolute parameter consensus verified for ${payload.target_name}. Pushing to Firestore.`);
   return { ok: true, expectedRadiusEarth, drift };

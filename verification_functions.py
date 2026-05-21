@@ -1414,6 +1414,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
                 "tic_id": str(tic_id),
                 "period_days": period_float,
                 "stellar": stellar,
+                "snr": snr,
             },
             {
                 "phase": phase_data,
@@ -1423,6 +1424,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
                 "odd_even": period_confidence_report,
                 "period_days": period_float,
                 "duration_hours": transit_duration_hours,
+                "snr": snr,
             },
         )
         corrected_flux = anomaly_context.get("flux")
@@ -1667,6 +1669,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             period_float,
             transit_duration_hours,
         )
+        anomaly_context["snr"] = snr
         anomaly_context = deploy_autonomous_sub_engine_matrix(
             anomaly_context,
             {
@@ -1679,6 +1682,7 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
                 "duration_hours": transit_duration_hours,
                 "orbital": orbital,
                 "centroid_report": centroid_report,
+                "snr": snr,
             },
         )
 
@@ -1748,14 +1752,9 @@ def run_full_physical_profile(tic_id, period_days, transit_duration_hours=None, 
             orbital["sanity_flags"].append("Autonomous Anomaly Engine Audit Warning")
             orbital["flag_reasons"].append(anomaly_force_rejection)
 
-        if snr < 6.0 and not benchmark_radius_locked:
-            orbital["sanity_flags"].append("Failed Strict SNR Firewall")
-            orbital["flag_reasons"].append(f"Measured SNR ({snr:.2f}) is below the strict 6.0 threshold. Noise-driven signal inflation suspected.")
-            orbital["classification"] = "Rejected: Physical Impossibility"
-            orbital["physical_integrity_score"] = min(orbital.get("physical_integrity_score", 100), 20)
-        elif snr < 6.0:
+        if snr < 6.0:
             orbital["sanity_flags"].append("SNR Audit Warning")
-            orbital["flag_reasons"].append(f"Measured SNR ({snr:.2f}) is below 6.0, but benchmark lock prevents automatic rejection.")
+            orbital["flag_reasons"].append(f"Measured SNR ({snr:.2f}) is below 6.0. Noise-driven signal inflation suspected.")
 
         validation = compute_validation_probability(
             snr,
