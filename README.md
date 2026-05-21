@@ -1,3 +1,4 @@
+The app frontend is deployed in this url: sarkar-exohunter-v5.netlify.app
 # Sarkar ExoHunter 🛰️
 ### A Sovereign Physical Intelligence Pipeline for Automated Exoplanet Discovery
 
