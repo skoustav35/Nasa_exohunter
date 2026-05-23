@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useFirebase } from './FirebaseProvider';
-import { Telescope, LogIn, LogOut, Cpu, Github, BookOpen } from 'lucide-react';
+import { Telescope, LogIn, LogOut, Cpu, Github, BookOpen, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { McpConfigModal } from './McpConfigModal';
 import { InstructionsModal } from './InstructionsModal';
@@ -45,6 +45,17 @@ export function Navbar() {
           >
             <Github className="w-4 h-4" />
             <span className="hidden sm:inline">GitHub</span>
+          </a>
+
+          {/* Sarkar OmniForge Button */}
+          <a
+            href="https://sarkaromniforge.netlify.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-sm font-bold text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/15 border border-cyan-500/25 hover:border-cyan-500/40 px-4 py-2 rounded-2xl transition-all hover:-translate-y-0.5 shadow-sm hover:shadow-lg hover:shadow-cyan-500/10 cursor-pointer"
+          >
+            <Layers className="w-4 h-4" />
+            <span className="hidden sm:inline">OmniForge</span>
           </a>
 
           {/* MCP Connect Button */}
