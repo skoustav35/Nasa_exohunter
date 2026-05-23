@@ -2163,7 +2163,7 @@ Write in scientific prose with LaTeX equations where appropriate (use $...$ for 
   // ── Vite middleware (dev) or static serving (prod) ──────────
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true, hmr: true },
       appType: "spa",
     });
     app.use(vite.middlewares);

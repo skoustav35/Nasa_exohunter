@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useFirebase } from './FirebaseProvider';
-import { Telescope, LogIn, LogOut, Cpu, Github } from 'lucide-react';
+import { Telescope, LogIn, LogOut, Cpu, Github, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { McpConfigModal } from './McpConfigModal';
+import { InstructionsModal } from './InstructionsModal';
 
 export function Navbar() {
   const { user, researcherName, signIn, signOut, loading } = useFirebase();
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
+  const [showInstructionsModal, setShowInstructionsModal] = useState(false);
 
   return (
     <motion.nav 
@@ -25,6 +27,15 @@ export function Navbar() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Discovery Guide Button */}
+          <button
+            onClick={() => setShowInstructionsModal(true)}
+            className="flex items-center gap-2 text-sm font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/25 hover:border-emerald-500/40 px-4 py-2 rounded-2xl transition-all hover:-translate-y-0.5 shadow-sm hover:shadow-lg hover:shadow-emerald-500/10 cursor-pointer"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span className="hidden sm:inline">Discovery Guide</span>
+          </button>
+
           {/* GitHub Button */}
           <a
             href="https://github.com/skoustav35/Nasa_exohunter.git"
@@ -109,6 +120,9 @@ export function Navbar() {
 
       {/* MCP Config Modal */}
       <McpConfigModal isOpen={showMcpModal} onClose={() => setShowMcpModal(false)} />
+
+      {/* Discovery Guide Modal */}
+      <InstructionsModal isOpen={showInstructionsModal} onClose={() => setShowInstructionsModal(false)} />
     </motion.nav>
   );
 }

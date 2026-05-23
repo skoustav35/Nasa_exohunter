@@ -1,7 +1,7 @@
 {
   "name": "sarkar-exohunter-mcp",
-  "version": "1.0.0",
-  "description": "MCP Server for Sarkar ExoHunter — AI-powered exoplanet discovery via any AI IDE",
+  "version": "2.0.0",
+  "description": "AstroForge MCP Server — Firebase-native analytical bridge for transient classification (Firestore + RTDB)",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "axios": "^1.16.1",
+    "firebase-admin": "^13.10.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {
